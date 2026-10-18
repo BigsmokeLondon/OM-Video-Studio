@@ -1482,7 +1482,7 @@ def gui():
         write_log("GUI ERROR\n" + "".join(traceback.format_exception(et, ev, tb)))
         sys.__excepthook__(et, ev, tb)
     root.report_callback_exception = _tk_error
-    write_log(f"--- {APP} v{VERSION} started ({'installed exe' if FROZEN else 'script'}, python {sys.version.split()[0]}, ffmpeg: {ff_version() if shutil.which('ffmpeg') else 'not found'}) ---")
+    write_log(f"--- {APP} v{VERSION} started ({'installed exe' if FROZEN else 'script'}, python {sys.version.split()[0]}, ffmpeg: {ff_version() if find_tool('ffmpeg') else 'not found'}) ---")
     wrapped, themed_text, themed_canvas = [], [], []
     state = {"running": False, "outputs": [], "outdir": None, "theme": theme}
 
