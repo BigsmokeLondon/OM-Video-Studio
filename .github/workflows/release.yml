@@ -39,7 +39,7 @@ jobs:
         run: >
           python -m PyInstaller --noconfirm --clean --windowed --name OM-FFmpeg-Studio --icon app.ico
           --add-data "app.ico;." --add-data "Resource;Resource"
-          --collect-all sv_ttk --collect-all tkinterdnd2 --collect-all pywinstyles ffmpeg_studio.py
+          --collect-all sv_ttk --collect-all tkinterdnd2 --collect-all pywinstyles --collect-all certifi ffmpeg_studio.py
 
       - name: Build installer
         shell: pwsh

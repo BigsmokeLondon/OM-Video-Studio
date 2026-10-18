@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. FFmpeg Studio"
-VERSION = "1.0"
+VERSION = "1.0.1"
 GITHUB_REPO = "BigsmokeLondon/OM-FFmpeg-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -61,9 +61,61 @@ FFMPEG_URLS = [  # both are the full GPL builds (include libvidstab etc.)
 ]
 
 
+def urlopen_robust(req, timeout=30):
+    """urlopen that survives PCs whose Windows root-certificate store is incomplete (common on fresh installs):
+    try the system certificates first, then the bundled certifi list."""
+    import ssl
+    import urllib.error
+    import urllib.request
+    ctxs = [ssl.create_default_context()]
+    try:
+        import certifi
+        ctxs.append(ssl.create_default_context(cafile=certifi.where()))
+    except Exception:  # noqa: BLE001
+        pass
+    last = None
+    for ctx in ctxs:
+        try:
+            return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+        except (ssl.SSLError, urllib.error.URLError) as e:
+            if isinstance(e, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(e):
+                last = e
+                write_log(f"TLS certificate check failed with one trust store ({type(e).__name__}); trying the next")
+                continue
+            raise
+    raise last
+
+
+def download_file(url, dest, report):
+    """Download url to dest with progress. Falls back to Windows' own curl.exe (which can fetch missing root certificates)."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "OM-FFmpeg-Studio"})
+        with urlopen_robust(req, timeout=30) as r, open(dest, "wb") as out:
+            total = int(r.headers.get("Content-Length") or 0)
+            done = 0
+            while True:
+                chunk = r.read(256 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+                done += len(chunk)
+                report(0.9 * done / total if total else 0.0, f"Downloading ffmpeg… {done // 1048576} MB" + (f" of {total // 1048576} MB" if total else ""))
+        return
+    except Exception as e:  # noqa: BLE001
+        write_log(f"Python download failed ({type(e).__name__}: {e}); trying curl.exe")
+    curl = shutil.which("curl.exe") or shutil.which("curl")
+    if not curl:
+        raise RuntimeError("download failed and curl.exe is not available")
+    report(0.0, "Downloading ffmpeg with Windows curl… (no progress shown, please wait)")
+    r = subprocess.run([curl, "-L", "--fail", "--silent", "--show-error", "-o", str(dest), url], capture_output=True, text=True,
+                       creationflags=NO_WINDOW, timeout=1800)
+    if r.returncode != 0:
+        raise RuntimeError("curl: " + (r.stderr or "").strip()[-200:])
+
+
 def install_ffmpeg(report):
     """Download ffmpeg into DATA_DIR/ffmpeg (no admin needed). report(fraction, text). Returns (ok, message)."""
-    import urllib.request
     import zipfile
     if os.name != "nt":
         return False, "Automatic install is Windows-only. Install ffmpeg with your package manager (e.g. apt/brew install ffmpeg)."
@@ -72,17 +124,7 @@ def install_ffmpeg(report):
         zpath = Path(tempfile.gettempdir()) / "om_ffmpeg_download.zip"
         try:
             report(0.0, "Connecting…")
-            req = urllib.request.Request(url, headers={"User-Agent": "OM-FFmpeg-Studio"})
-            with urllib.request.urlopen(req, timeout=30) as r, open(zpath, "wb") as out:
-                total = int(r.headers.get("Content-Length") or 0)
-                done = 0
-                while True:
-                    chunk = r.read(256 * 1024)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    done += len(chunk)
-                    report(0.9 * done / total if total else 0.0, f"Downloading ffmpeg… {done // 1048576} MB" + (f" of {total // 1048576} MB" if total else ""))
+            download_file(url, zpath, report)
             report(0.92, "Unpacking…")
             dest = FFMPEG_HOME / "bin"
             dest.mkdir(parents=True, exist_ok=True)
@@ -2010,7 +2052,7 @@ def gui():
             try:
                 import urllib.request
                 req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", headers={"User-Agent": "OM-FFmpeg-Studio"})
-                with urllib.request.urlopen(req, timeout=8) as r:
+                with urlopen_robust(req, timeout=8) as r:
                     data = json.loads(r.read().decode("utf-8"))
                 tag = str(data.get("tag_name", "")).lstrip("vV")
                 parse = lambda v: tuple(int(x) for x in re.findall(r"\d+", v)[:3])  # noqa: E731

@@ -8,7 +8,7 @@ python -m pip install --upgrade pip || goto :err
 python -m pip install -r requirements.txt pyinstaller || goto :err
 python -m PyInstaller --noconfirm --clean --windowed --name OM-FFmpeg-Studio --icon app.ico ^
   --add-data "app.ico;." --add-data "Resource;Resource" ^
-  --collect-all sv_ttk --collect-all tkinterdnd2 --collect-all pywinstyles ffmpeg_studio.py || goto :err
+  --collect-all sv_ttk --collect-all tkinterdnd2 --collect-all pywinstyles --collect-all certifi ffmpeg_studio.py || goto :err
 where iscc >nul 2>nul && (iscc /DAppVersion=%VER% installer\setup.iss) || echo Inno Setup (iscc) not found - skipping installer. Get it from https://jrsoftware.org/isinfo.php
 echo.
 echo Done. Portable app: dist\OM-FFmpeg-Studio\OM-FFmpeg-Studio.exe
