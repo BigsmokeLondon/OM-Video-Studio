@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. FFmpeg Studio"
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 GITHUB_REPO = "BigsmokeLondon/OM-FFmpeg-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -55,9 +55,9 @@ def refresh_tools():
     return bool(find_tool("ffmpeg") and find_tool("ffprobe"))
 
 
-FFMPEG_URLS = [  # both are the full GPL builds (include libvidstab etc.)
-    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.zip",
+FFMPEG_URLS = [  # first: full GPL build (has libvidstab etc.); fallback: gyan.dev essentials (no stabilise filter)
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
 ]
 
 
@@ -1353,8 +1353,7 @@ def play_startup_sound():
         snd = STARTUP_SOUND
         if not snd.exists():  # fall back to any mp3 in the Resource folder (handles renamed files)
             found = sorted(snd.parent.glob("*.mp3")) if snd.parent.is_dir() else []
-            if not found:
-                write_log(f"Startup sound not found: {STARTUP_SOUND}")
+            if not found:  # normal for the public installer: it ships without a sound
                 return
             snd = found[0]
         if os.name == "nt":
