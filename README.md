@@ -23,7 +23,7 @@ Prefer no installer? Download `OM-FFmpeg-Studio-Portable.zip`, unzip anywhere an
 ```
 build.bat            # needs Python 3.10-3.13; add Inno Setup to also make the installer
 ```
-Pushing a tag such as `v1.1` makes GitHub Actions build and publish a release automatically.
+Every push to `main` makes GitHub Actions build the installer and publish release `v<VERSION>` (the `VERSION` line in `ffmpeg_studio.py`); bump it to ship a new version.
 Run the app straight from source with `pip install -r requirements.txt` then `python ffmpeg_studio.py`.
 
 ## Licence
