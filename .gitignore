@@ -5,5 +5,3 @@ Output/
 *.spec
 ffmpeg_studio_log.txt
 ffmpeg_studio.zip
-# Launch sound: add your own mp3 locally. Remove this line only if you own the rights to the file and want it in the public installer.
-Resource/*.mp3

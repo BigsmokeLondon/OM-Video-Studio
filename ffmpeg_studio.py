@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. FFmpeg Studio"
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 GITHUB_REPO = "BigsmokeLondon/OM-FFmpeg-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
