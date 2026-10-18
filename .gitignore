@@ -3,5 +3,5 @@ build/
 dist/
 Output/
 *.spec
-ffmpeg_studio_log.txt
-ffmpeg_studio.zip
+om_video_studio_log.txt
+om_video_studio.zip

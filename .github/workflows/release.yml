@@ -21,8 +21,8 @@ jobs:
       - name: Work out version
         shell: pwsh
         run: |
-          # the version lives in ffmpeg_studio.py (VERSION = "1.0"); bump it to publish a new release
-          $v = (Select-String -Path ffmpeg_studio.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
+          # the version lives in om_video_studio.py (VERSION = "1.1.0"); bump it to publish a new release
+          $v = (Select-String -Path om_video_studio.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
           "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install dependencies
@@ -32,33 +32,33 @@ jobs:
           choco install ffmpeg innosetup -y --no-progress
 
       - name: Quick self-test of the engine
-        run: python ffmpeg_studio.py --selftest trim,split,convert,compress,extract,thumb
+        run: python om_video_studio.py --selftest trim,split,convert,compress,extract,thumb
 
       - name: Build app with PyInstaller
         shell: cmd
         run: >
-          python -m PyInstaller --noconfirm --clean --windowed --name OM-FFmpeg-Studio --icon app.ico
+          python -m PyInstaller --noconfirm --clean --windowed --name OM-Video-Studio --icon app.ico
           --add-data "app.ico;." --add-data "Resource;Resource"
-          --collect-all sv_ttk --collect-all tkinterdnd2 --collect-all pywinstyles --collect-all certifi ffmpeg_studio.py
+          --collect-all sv_ttk --collect-all tkinterdnd2 --collect-all pywinstyles --collect-all certifi om_video_studio.py
 
       - name: Build installer
         shell: pwsh
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:VERSION" installer\setup.iss
-          Compress-Archive -Path dist\OM-FFmpeg-Studio\* -DestinationPath Output\OM-FFmpeg-Studio-Portable.zip
+          Compress-Archive -Path dist\OM-Video-Studio\* -DestinationPath Output\OM-Video-Studio-Portable.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: OM-FFmpeg-Studio
+          name: OM-Video-Studio
           path: Output/*
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
-          name: O.M. FFmpeg Studio ${{ env.VERSION }}
+          name: O.M. Video Studio ${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
           files: |
-            Output/OM-FFmpeg-Studio-Setup.exe
-            Output/OM-FFmpeg-Studio-Portable.zip
+            Output/OM-Video-Studio-Setup.exe
+            Output/OM-Video-Studio-Portable.zip
           generate_release_notes: true

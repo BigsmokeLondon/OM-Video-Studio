@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-O.M. FFmpeg Studio - point-and-click front end for ffmpeg.
+O.M. Video Studio - point-and-click video, audio and image tools, powered by ffmpeg.
 
 Pick a file (or a folder for batch), press a button, set a few options, run.
 Standard library only (tkinter). Needs ffmpeg + ffprobe on PATH.
 
-    python ffmpeg_studio.py             # open the GUI
-    python ffmpeg_studio.py --selftest  # build + run every operation on a generated clip
-    python ffmpeg_studio.py --list      # list operations
+    python om_video_studio.py             # open the GUI
+    python om_video_studio.py --selftest  # build + run every operation on a generated clip
+    python om_video_studio.py --list      # list operations
 """
 import json
 import math
@@ -21,9 +21,9 @@ import tempfile
 import threading
 from pathlib import Path
 
-APP = "O.M. FFmpeg Studio"
-VERSION = "1.0.5"
-GITHUB_REPO = "BigsmokeLondon/OM-FFmpeg-Studio"  # releases are checked here for updates
+APP = "O.M. Video Studio"
+VERSION = "1.1.0"
+GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
 SUB_EXT = {".srt", ".ass", ".vtt"}
@@ -34,8 +34,31 @@ FROZEN = bool(getattr(sys, "frozen", False))  # True when running as the install
 APP_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))  # bundled read-only files (Resource/, app.ico)
 # Installed copies live in Program Files (read-only), so logs and the downloaded ffmpeg go in the user's data folder.
-DATA_DIR = (Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "O.M. FFmpeg Studio") if FROZEN else APP_DIR
+DATA_DIR = (Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "O.M. Video Studio") if FROZEN else APP_DIR
 FFMPEG_HOME = DATA_DIR / "ffmpeg"
+SETTINGS_PATH = Path.home() / ".om_video_studio.json"
+
+
+def _migrate_old_data():
+    """Versions 1.0.x were called 'O.M. FFmpeg Studio': carry their data folder (incl. the downloaded ffmpeg) and settings across."""
+    try:
+        old_dir = DATA_DIR.parent / "O.M. FFmpeg Studio"
+        if FROZEN and old_dir.is_dir() and not DATA_DIR.exists():
+            try:
+                old_dir.rename(DATA_DIR)
+            except OSError:
+                shutil.copytree(old_dir, DATA_DIR)
+            old_log = DATA_DIR / "ffmpeg_studio_log.txt"
+            if old_log.exists() and not (DATA_DIR / "om_video_studio_log.txt").exists():
+                old_log.rename(DATA_DIR / "om_video_studio_log.txt")
+        old_settings = Path.home() / ".ffmpeg_studio.json"
+        if old_settings.exists() and not SETTINGS_PATH.exists():
+            shutil.copy2(old_settings, SETTINGS_PATH)
+    except Exception:  # noqa: BLE001  (migration is best-effort)
+        pass
+
+
+_migrate_old_data()
 
 
 def find_tool(name):
@@ -90,7 +113,7 @@ def download_file(url, dest, report):
     """Download url to dest with progress. Falls back to Windows' own curl.exe (which can fetch missing root certificates)."""
     import urllib.request
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "OM-FFmpeg-Studio"})
+        req = urllib.request.Request(url, headers={"User-Agent": "OM-Video-Studio"})
         with urlopen_robust(req, timeout=30) as r, open(dest, "wb") as out:
             total = int(r.headers.get("Content-Length") or 0)
             done = 0
@@ -163,7 +186,6 @@ def install_ffmpeg(report):
             except OSError:
                 pass
     return False, "Could not download ffmpeg (" + last + "). Check your internet connection, or install it yourself with:  winget install Gyan.FFmpeg"
-SETTINGS_PATH = Path.home() / ".ffmpeg_studio.json"
 
 
 def _log_path():
@@ -171,7 +193,7 @@ def _log_path():
     for d in (DATA_DIR, Path.home()):
         try:
             d.mkdir(parents=True, exist_ok=True)
-            f = d / "ffmpeg_studio_log.txt"
+            f = d / "om_video_studio_log.txt"
             with open(f, "a", encoding="utf-8"):
                 pass
             return f
@@ -184,7 +206,7 @@ LOG_FILE = _log_path()
 
 
 def write_log(text):
-    """Append a timestamped entry to ffmpeg_studio_log.txt (trimmed to ~1 MB). Never raises."""
+    """Append a timestamped entry to om_video_studio_log.txt (trimmed to ~1 MB). Never raises."""
     if not LOG_FILE:
         return
     try:
@@ -1345,7 +1367,7 @@ STARTUP_SOUND = RES_DIR / "Resource" / "Whips _the_Llama_Ass.mp3"
 def play_startup_sound():
     """Play the launch sound. Windows: convert the mp3 to a small wav with ffmpeg, then play it with winsound
     (standard library, same path as normal Windows sounds). Fallback: ffplay. Turn off with
-    "startup_sound": false in the settings file. Every step is written to ffmpeg_studio_log.txt."""
+    "startup_sound": false in the settings file. Every step is written to om_video_studio_log.txt."""
     if not load_settings().get("startup_sound", True):
         return
     try:
@@ -1359,7 +1381,7 @@ def play_startup_sound():
         if os.name == "nt":
             try:
                 import winsound
-                wav = Path(tempfile.gettempdir()) / "om_ffmpeg_studio_start.wav"
+                wav = Path(tempfile.gettempdir()) / "om_video_studio_start.wav"
                 r = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", str(snd), "-vn", "-acodec", "pcm_s16le",
                                     "-ar", "44100", "-ac", "2", str(wav)], capture_output=True, text=True, encoding="utf-8",
                                    errors="replace", creationflags=NO_WINDOW, timeout=20)
@@ -2050,7 +2072,7 @@ def gui():
         def work():
             try:
                 import urllib.request
-                req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", headers={"User-Agent": "OM-FFmpeg-Studio"})
+                req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", headers={"User-Agent": "OM-Video-Studio"})
                 with urlopen_robust(req, timeout=8) as r:
                     data = json.loads(r.read().decode("utf-8"))
                 tag = str(data.get("tag_name", "")).lstrip("vV")
