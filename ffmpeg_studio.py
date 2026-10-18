@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. FFmpeg Studio"
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 GITHUB_REPO = "BigsmokeLondon/OM-FFmpeg-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -1454,7 +1454,7 @@ def gui():
     root.minsize(1020, 700)
 
     settings = load_settings()
-    theme = settings.get("theme", "light") if sv_ttk else "light"
+    theme = settings.get("theme", "dark") if sv_ttk else "light"
     if theme not in PALETTE:
         theme = "light"
     style = ttk.Style()
