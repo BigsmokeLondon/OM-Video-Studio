@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. Video Studio"
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -1498,12 +1498,15 @@ def format_commands(spec, opts, f, outdir=None):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def grab_frame(path, t, out_png, vf="", box=(420, 300)):
-    """Save one frame at time t (seconds) as a PNG scaled to fit inside box. Returns True on success."""
-    scale = f"scale=w={box[0]}:h={box[1]}:force_original_aspect_ratio=decrease"
-    chain = (vf + "," if vf else "") + scale
-    cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-ss", f"{max(0.0, t):.3f}", "-i", path,
-           "-frames:v", "1", "-vf", chain, out_png]
+def grab_frame(path, t, out_png, vf="", box=(420, 240)):
+    """Save one frame at time t (seconds) as a PNG scaled to fit inside box (box=None: full size). Returns True on success."""
+    parts = [vf] if vf else []
+    if box:
+        parts.append(f"scale=w={box[0]}:h={box[1]}:force_original_aspect_ratio=decrease")
+    cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-ss", f"{max(0.0, t):.3f}", "-i", path, "-frames:v", "1"]
+    if parts:
+        cmd += ["-vf", ",".join(parts)]
+    cmd.append(out_png)
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=30, creationflags=NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
@@ -2623,10 +2626,13 @@ def gui():
         labels = []
         for nm in names:
             ttk.Label(box, text=nm, style="Muted.TLabel").pack(anchor="w")
-            lab = ttk.Label(box, text="loading…", anchor="center")
-            lab.pack(pady=(0, 8))
+            hold = ttk.Frame(box, width=430, height=245)  # fixed slot so the window does not jump when a picture appears
+            hold.pack(pady=(0, 6))
+            hold.pack_propagate(False)
+            lab = ttk.Label(hold, text="loading…", anchor="center")
+            lab.pack(expand=True)
             labels.append(lab)
-        note = ttk.Label(box, text="", style="Muted.TLabel", wraplength=420)
+        note = ttk.Label(box, text="", style="Muted.TLabel", wraplength=430)
         note.pack(anchor="w")
         tmpd = tempfile.mkdtemp(prefix="ffprev_")
         st = {"n": 0, "after": None, "imgs": []}
@@ -2654,7 +2660,7 @@ def gui():
                 elif spec["id"] != "crop":
                     t0 = dur / 3 if dur else 0
                     f0, f1 = os.path.join(tmpd, f"b{n}.png"), os.path.join(tmpd, f"a{n}.png")
-                    paths.append(f0 if grab_frame(src, t0, f0, box=(99999, 99999)) else None)
+                    paths.append(f0 if grab_frame(src, t0, f0, box=None) else None)
                     try:
                         o2 = convert_opts(spec, raw)
                     except ValueError:
@@ -2690,10 +2696,10 @@ def gui():
                 except tk.TclError:
                     loaded.append(None)
             if pair:  # same shrink factor for both so a smaller result really looks smaller
-                kk = max([1] + [max(-(-i_.width() // 420), -(-i_.height() // 300)) for i_ in loaded if i_ is not None])
+                kk = max([1] + [max(-(-i_.width() // 420), -(-i_.height() // 240)) for i_ in loaded if i_ is not None])
                 ks = [kk] * len(loaded)
             else:
-                ks = [max(1, -(-i_.width() // 420), -(-i_.height() // 300)) if i_ is not None else 1 for i_ in loaded]
+                ks = [max(1, -(-i_.width() // 420), -(-i_.height() // 240)) if i_ is not None else 1 for i_ in loaded]
             for lab, img, k in zip(labels, loaded, ks):
                 if img is not None and k > 1:
                     img = img.subsample(k, k)
@@ -2926,6 +2932,8 @@ def selftest_extras():
     check("resize 320p portrait uses short side", rz_size(port, preset="320p") == (320, 568), str(rz_size(port, preset="320p")))
     check("resize custom boxes", rz_size(clip, preset=RES_CUSTOM, width="200", height="-2") == (200, 112))
     check("resize presets cover 320p..8K", "320p" in RES and "4320p (8K)" in RES and RES["2160p (4K)"] == 2160)
+    fbig = work / "big.png"
+    check("grab_frame box=None keeps full size", grab_frame(str(clip), 1.0, str(fbig), box=None) and png_size(str(fbig)) == (640, 360), str(png_size(str(fbig))))
     pw, ph = png_size(str(f1))
     check("png_size", pw > 0 and ph > 0, str((pw, ph)))
     lines = []
