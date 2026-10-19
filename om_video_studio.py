@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. Video Studio"
-VERSION = "1.5.1"
+VERSION = "1.6.0"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -1675,6 +1675,102 @@ def play_startup_sound():
         write_log(f"Startup sound failed: {e!r}")
 
 
+# --------------------------------------------------------------------------- languages
+try:
+    from om_translations import LANGS, TR  # language names + {code: {english text: translation}}
+except Exception:  # noqa: BLE001 - the app still works (in English) without the translation file
+    LANGS, TR = {"en": "English"}, {}
+LANG = {"code": "en", "templ": []}
+
+
+def set_lang(code):
+    LANG["code"] = code if code in LANGS else "en"
+    tbl = TR.get(LANG["code"], {})
+    # "Running: {}" style entries match any text of that shape
+    LANG["templ"] = [(re.compile("^" + re.escape(k).replace(r"\{\}", "(.+?)") + "$", re.S), v) for k, v in tbl.items() if "{}" in k]
+
+
+def tr(s):
+    """Translate an English UI text into the chosen language (unknown texts stay English)."""
+    if not isinstance(s, str) or LANG["code"] == "en" or not s.strip():
+        return s
+    tbl = TR.get(LANG["code"], {})
+    if s in tbl:
+        return tbl[s]
+    if "\n(" in s and s.replace("\n(", " (") in tbl:  # operation buttons wrap their label before the bracket
+        return tbl[s.replace("\n(", " (")].replace(" (", "\n(", 1)
+    for rx, v in LANG["templ"]:
+        m = rx.match(s)
+        if m:
+            parts = []
+            for g in m.groups():
+                parts.append(tr(g))
+            return v.format(*parts) if "{}" in v else v
+    m = re.match(r"^(\S{1,3}\s{2,})(.+)$", s, re.S)  # "icon  Category"
+    if m and m.group(2) in tbl:
+        return m.group(1) + tbl[m.group(2)]
+    return s
+
+
+# --------------------------------------------------------------------------- completion sounds
+def _tone_wav(path, notes, rate=44100):
+    """Write a small mono 16-bit wav of bell-like notes. notes = [(freq_hz, start_s, length_s, volume 0-1)]."""
+    import math, struct, wave
+    total = max(st + ln for _, st, ln, _ in notes) + 0.15
+    n = int(total * rate)
+    buf = [0.0] * n
+    for f, st, ln, vol in notes:
+        i0 = int(st * rate)
+        for i in range(int(ln * rate)):
+            if i0 + i >= n:
+                break
+            t = i / rate
+            env = min(1.0, i / (0.004 * rate)) * math.exp(-4.2 * t / ln)  # quick attack, smooth decay
+            v = math.sin(2 * math.pi * f * t) + 0.3 * math.sin(2 * math.pi * f * 2.01 * t) + 0.12 * math.sin(2 * math.pi * f * 3.02 * t)
+            buf[i0 + i] += vol * env * v
+    peak = max(1e-9, max(abs(x) for x in buf))
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(struct.pack("<h", int(max(-1, min(1, x / peak * 0.85)) * 32767)) for x in buf))
+
+
+# kind -> notes. "job" = one job finished (short two-note ping), "batch" = queue / many files finished
+# (a different, longer rising chime), "error" = something failed (low, falling).
+SOUNDS = {
+    "job": [(1319, 0.00, 0.22, 0.8), (1760, 0.11, 0.30, 0.9)],
+    "batch": [(523, 0.00, 0.35, 0.8), (659, 0.16, 0.35, 0.8), (784, 0.32, 0.35, 0.8), (1047, 0.48, 0.70, 0.95)],
+    "error": [(330, 0.00, 0.30, 0.9), (247, 0.20, 0.45, 0.9)],
+}
+
+
+def sound_file(kind):
+    p = Path(tempfile.gettempdir()) / f"om_video_studio_{kind}.wav"
+    if not p.exists():
+        _tone_wav(p, SOUNDS[kind])
+    return p
+
+
+def play_ping(kind):
+    """Play a completion sound (Windows: winsound, asynchronous). Off when the settings file has "sounds": false."""
+    try:
+        if not load_settings().get("sounds", True):
+            return False
+        p = sound_file(kind)
+        if os.name == "nt":
+            import winsound
+            winsound.PlaySound(str(p), winsound.SND_FILENAME | winsound.SND_ASYNC)
+            return True
+    except Exception as e:  # noqa: BLE001
+        write_log(f"Ping failed: {e!r}")
+    return False
+
+
+def ping_kind(ok, fail, batch):
+    return "error" if fail and not ok else ("batch" if batch else "job")
+
+
 def detect_gpu():
     try:
         r = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, encoding="utf-8",
@@ -1737,6 +1833,37 @@ def gui():
     root.minsize(1020, 700)
 
     settings = load_settings()
+    set_lang(settings.get("lang", "en"))
+    if LANG["code"] != "en":
+        # Translate every label / button / message at the moment it is created or changed, so the whole window follows
+        # the chosen language without touching each widget. Texts with no translation simply stay English.
+        for cls in (ttk.Label, ttk.Button, ttk.Checkbutton, ttk.Radiobutton, ttk.LabelFrame, tk.Label, tk.Button):
+            def _patch(cls=cls):
+                oi, oc = cls.__init__, cls.configure
+
+                def init(self, *a, **k):
+                    if "text" in k:
+                        k["text"] = tr(k["text"])
+                    oi(self, *a, **k)
+
+                def conf(self, cnf=None, **k):
+                    if "text" in k:
+                        k["text"] = tr(k["text"])
+                    return oc(self, cnf, **k) if cnf is not None else oc(self, **k)
+                cls.__init__, cls.configure, cls.config = init, conf, conf
+            _patch()
+        for nm in ("showinfo", "showwarning", "showerror", "askyesno"):
+            def _wrap(nm=nm, orig=getattr(messagebox, nm)):
+                def f(title=None, message=None, **k):
+                    return orig(tr(title), tr(message), **k)
+                setattr(messagebox, nm, f)
+            _wrap()
+        _otitle = tk.Wm.title
+
+        def _title(self, string=None):
+            return _otitle(self, tr(string) if string is not None else None)
+        tk.Wm.title = _title
+        tk.Wm.wm_title = _title
     theme = settings.get("theme", "dark") if sv_ttk else "light"
     if theme not in PALETTE:
         theme = "light"
@@ -1856,7 +1983,9 @@ def gui():
     gpu_var = tk.BooleanVar(value=False)
     cmd_var = tk.BooleanVar(value=False)
     info_var = tk.StringVar(value="Choose a file or a folder to begin.")
-    status_var = tk.StringVar(value="Ready")
+    status_var = tk.StringVar(value=tr("Ready"))
+    _sv_set = status_var.set
+    status_var.set = lambda v: _sv_set(tr(v))  # status messages follow the chosen language too
 
     # ------------------------------------------------------------------ header band
     header = tk.Frame(root, bg=BRAND_BG)
@@ -1870,6 +1999,27 @@ def gui():
     theme_btn = ttk.Button(hr, text="☾  Dark mode" if theme == "light" else "☀  Light mode", command=toggle_theme)
     if sv_ttk:
         theme_btn.pack(anchor="e", pady=(6, 0))
+    lang_var = tk.StringVar(value=LANGS.get(LANG["code"], "English"))
+    lang_box = ttk.Combobox(hr, textvariable=lang_var, values=list(LANGS.values()), state="readonly", width=16)
+    lang_box.pack(anchor="e", pady=(6, 0))
+
+    def on_lang(_e=None):
+        code = next((c for c, n in LANGS.items() if n == lang_var.get()), "en")
+        if code == LANG["code"]:
+            return
+        settings["lang"] = code
+        save_settings(settings)
+        # the new language is read when the app starts, so offer to restart it right away
+        if messagebox.askyesno(APP, "Restart the app now to switch language?\n(Your files and settings are kept.)"):
+            try:
+                if getattr(sys, "frozen", False):
+                    subprocess.Popen([sys.executable])
+                else:
+                    subprocess.Popen([sys.executable, str(Path(__file__).resolve())])
+                root.destroy()
+            except Exception:  # noqa: BLE001
+                messagebox.showinfo(APP, "Please close and reopen the app to use the new language.")
+    lang_box.bind("<<ComboboxSelected>>", on_lang)
 
     # ------------------------------------------------------------------ input card
     card = ttk.LabelFrame(root, text="Input", padding=(12, 8, 12, 8))
@@ -1977,6 +2127,14 @@ def gui():
     ttk.Checkbutton(row, text="Show ffmpeg commands", variable=cmd_var).pack(side="left", padx=10)
     if gpu_available:
         ttk.Checkbutton(row, text="Use GPU (NVENC)", variable=gpu_var, command=lambda: STATE.update(gpu=gpu_var.get())).pack(side="left")
+    snd_var = tk.BooleanVar(value=settings.get("sounds", True))
+
+    def toggle_sound():
+        settings["sounds"] = snd_var.get()
+        save_settings(settings)
+        if snd_var.get():
+            play_ping("job")
+    ttk.Checkbutton(row, text="Sound", variable=snd_var, command=toggle_sound).pack(side="left", padx=10)
     ttk.Button(row, text="A+", width=4, command=lambda: set_fsize(1)).pack(side="right")
     ttk.Button(row, text="A-", width=4, command=lambda: set_fsize(-1)).pack(side="right", padx=(12, 4))
     ttk.Label(row, text="Text size:").pack(side="right")
@@ -2143,6 +2301,7 @@ def gui():
                     state["running"] = False
                     cancel_btn.configure(state="disabled")
                     ok, fail, outs = val
+                    play_ping(ping_kind(ok, fail, state.get("batch", False) or ok + fail > 1))
                     if outs:
                         state["outdir"] = str(Path(outs[-1]).parent if not os.path.isdir(outs[-1]) else outs[-1])
                         open_btn.configure(state="normal")
@@ -2335,8 +2494,8 @@ def gui():
             os.makedirs(outdir, exist_ok=True)
         return files, opts2, outdir
 
-    def begin_run(label):
-        state.update(running=True, outputs=[])
+    def begin_run(label, batch=False):
+        state.update(running=True, outputs=[], batch=batch)
         cancel.clear()
         cancel_btn.configure(state="normal")
         open_btn.configure(state="disabled")
@@ -2398,7 +2557,7 @@ def gui():
         items = list(state["queue"])
         state["queue"] = []
         refresh_queue_btn()
-        begin_run(f"queue of {len(items)} job(s)")
+        begin_run(f"queue of {len(items)} job(s)", batch=True)
 
         def work():
             res = run_queue(items, log, lambda f: q.put(("prog", f)), cancel, cmd_var.get())
@@ -2796,7 +2955,7 @@ def gui():
         extras.append("modern theme off (pip install sv-ttk)")
     if not dnd:
         extras.append("drag-and-drop off (pip install tkinterdnd2)")
-    status_var.set("Ready" + (f"   |   ffmpeg {ver}" if ver else "") + ("   |   " + "; ".join(extras) if extras else ""))
+    status_var.set(tr("Ready") + (f"   |   ffmpeg {ver}" if ver else "") + ("   |   " + "; ".join(extras) if extras else ""))
     if not have_ff:
         refresh_info()
         root.after(300, offer_ffmpeg_install)
@@ -2949,6 +3108,37 @@ def selftest_extras():
     ok, fail, outs = run_queue(items, lines.append, lambda f: None, ev)
     check("run_queue honours cancel", ok == 0 and fail == 0 and outs == [])
     shutil.rmtree(work, ignore_errors=True)
+    # ---- languages: every language must cover every operation, category and option text
+    cats = {sp["cat"] for sp in OPS} | {"Favourites"}
+    need = cats | {sp["label"] for sp in OPS} | {o["label"] for sp in OPS for o in sp["opts"]}
+    check("14 languages listed", len(LANGS) == 14 and "en" in LANGS, str(len(LANGS)))
+    for code in LANGS:
+        if code == "en":
+            continue
+        tbl = TR.get(code, {})
+        miss = [k for k in need if k not in tbl]
+        check(f"language {code}: all operations/options translated", not miss, str(miss[:3]))
+        check(f"language {code}: templates keep their placeholders", all(k.count("{}") == v.count("{}") for k, v in tbl.items()))
+    set_lang("de")
+    check("tr: plain text", tr("Cancel") == TR["de"]["Cancel"])
+    check("tr: button label wrapped before the bracket", tr("Resize") == TR["de"]["Resize"] and "\n(" in tr("Change speed\n(slow-mo / time-lapse)"))
+    check("tr: template", tr("Running: Resize") == "Läuft: " + TR["de"]["Resize"], tr("Running: Resize"))
+    check("tr: icon + category", tr("\U0001F3AC  Video").endswith(TR["de"]["Video"]))
+    check("tr: unknown text stays English", tr("Some unknown text") == "Some unknown text")
+    set_lang("en")
+    check("tr: English is untouched", tr("Cancel") == "Cancel")
+    set_lang("xx")
+    check("tr: unknown language falls back to English", LANG["code"] == "en")
+    # ---- completion sounds
+    import wave
+    lens = {}
+    for k in SOUNDS:
+        f = sound_file(k)
+        with wave.open(str(f)) as w_:
+            lens[k] = w_.getnframes() / w_.getframerate()
+    check("three different sounds exist", len(set(round(v, 2) for v in lens.values())) == 3, str(lens))
+    check("batch chime is longer than the single ping", lens["batch"] > lens["job"] + 0.3)
+    check("ping kinds", ping_kind(1, 0, False) == "job" and ping_kind(3, 0, True) == "batch" and ping_kind(0, 2, False) == "error")
     print("EXTRAS", "FAILED: " + ", ".join(fails) if fails else "all passed")
     return 1 if fails else 0
 

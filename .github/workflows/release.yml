@@ -47,7 +47,7 @@ jobs:
         run: >
           python -m PyInstaller --noconfirm --clean --windowed --name OM-Video-Studio --icon app.ico
           --add-data "app.ico;." --add-data "Resource;Resource"
-          --collect-all sv_ttk --collect-all tkinterdnd2 --collect-all pywinstyles --collect-all certifi om_video_studio.py
+          --collect-all sv_ttk --collect-all tkinterdnd2 --collect-all pywinstyles --collect-all certifi --hidden-import om_translations om_video_studio.py
 
       - name: Build installer
         shell: pwsh

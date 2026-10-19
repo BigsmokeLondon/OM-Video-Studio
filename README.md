@@ -11,6 +11,10 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
+**New in 1.6.0:**
+- **13 languages.** Pick one from the drop-down at the top right: Urdu, Bengali, Nepali, Arabic, Russian, Hindi, Punjabi, Spanish, French, German, Portuguese, Italian and Turkish (plus English). The app offers to restart to switch. Menus, buttons, operation names and option labels are translated; longer help sentences and some messages stay in English. Arabic and Urdu text is shown correctly, but the window layout is not mirrored right-to-left.
+- **Completion sounds.** A short two-note ping when a job finishes, a different, longer rising chime when a batch or queue finishes, and a low falling tone if everything failed. Tick or untick **Sound** in the bottom bar to turn them on or off.
+
 **New in 1.5.0:** **Resize** now has a size dropdown from 144p / 240p / 320p up to 4K and 8K (with a "never enlarge" tick box), sliders for custom sizes, and a before/after preview that also shows the old and new pixel size.
 
 **New in 1.4.0:**
