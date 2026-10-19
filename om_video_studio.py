@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. Video Studio"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -2050,6 +2050,12 @@ def gui():
         last = settings.get("last", {}).get(spec["id"], {})
         getters = {}
         tkvars = {}
+        trim_dur = 0.0
+        if spec["id"] == "trim" and preview_source():
+            try:
+                trim_dur = float(probe(preview_source())["dur"] or 0)
+            except Exception:  # noqa: BLE001
+                trim_dur = 0.0
         for s in spec["opts"]:
             ttk.Label(frm, text=s["label"]).grid(row=r, column=0, sticky="w", pady=4, padx=(0, 12))
             t = s["type"]
@@ -2085,6 +2091,9 @@ def gui():
                 ttk.Entry(frm, textvariable=v, width=40).grid(row=r, column=1, columnspan=2, sticky="ew")
                 getters[s["key"]] = v.get
                 tkvars[s["key"]] = v
+                if trim_dur > 0 and spec["id"] == "trim" and s["key"] in ("start", "end"):
+                    r += 1
+                    add_slider(frm, r, v, trim_dur, s["key"] == "end")
             r += 1
         if not spec["opts"]:
             ttk.Label(frm, text="No options - just press Run.").grid(row=r, column=0, columnspan=3, sticky="w", pady=6)
@@ -2329,12 +2338,51 @@ def gui():
         fill()
 
     # ------------------------------------------------------------------ live preview (trim / crop)
+    def preview_source():
+        try:
+            src = (current_multi() or [path_var.get().strip().strip('"')])[0]
+            if os.path.isdir(src):
+                vids = [str(f) for f in sorted(Path(src).iterdir()) if f.is_file() and f.suffix.lower() in VIDEO_EXT]
+                src = vids[0] if vids else ""
+            return src if (have_ff and src and os.path.isfile(src)) else ""
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def add_slider(frm, row, var, dur, is_end):
+        """A slider (0..dur seconds) kept in step with a text variable. For the end box, far right means 'to the end' (blank)."""
+        sc = ttk.Scale(frm, from_=0, to=dur, orient="horizontal")
+        sc.grid(row=row, column=1, columnspan=2, sticky="ew", pady=(0, 2))
+        lock = {"on": False}
+
+        def from_scale(val):
+            if lock["on"]:
+                return
+            t = float(val)
+            lock["on"] = True
+            try:
+                var.set("" if (is_end and t >= dur - 0.05) else f"{t:.1f}".rstrip("0").rstrip("."))
+            finally:
+                lock["on"] = False
+
+        def from_var(*_):
+            if lock["on"]:
+                return
+            try:
+                t = tsec(var.get()) if str(var.get()).strip() else (dur if is_end else 0.0)
+            except ValueError:
+                return
+            lock["on"] = True
+            try:
+                sc.set(min(max(t, 0.0), dur))
+            finally:
+                lock["on"] = False
+        sc.configure(command=from_scale)
+        var.trace_add("write", from_var)
+        from_var()
+
     def attach_preview(top_, frm, spec, getters, tkvars, nrows):
-        src = (current_multi() or [path_var.get().strip().strip('"')])[0]
-        if os.path.isdir(src):
-            vids = [str(f) for f in sorted(Path(src).iterdir()) if f.is_file() and f.suffix.lower() in VIDEO_EXT]
-            src = vids[0] if vids else ""
-        if not have_ff or not src or not os.path.isfile(src):
+        src = preview_source()
+        if not src:
             return
         box = ttk.LabelFrame(frm, text="Live preview", padding=8)
         box.grid(row=0, column=3, rowspan=max(nrows, 4), sticky="n", padx=(18, 0))
