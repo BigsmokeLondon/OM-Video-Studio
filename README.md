@@ -1,7 +1,7 @@
 # O.M. Video Studio
 
 Point-and-click video, audio and image tools for Windows, powered by ffmpeg. Pick a file, press a button.
-Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, thumbnails and more (69 operations).
+Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, thumbnails and more (70 operations).
 
 ## Install (Windows 10/11)
 

@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. Video Studio"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -530,6 +530,38 @@ def b_remux(o, c):
 @op("Format & Quality", "faststart", "Prepare for web playback (fast-start MP4)")
 def b_faststart(o, c):
     return [job(["-i", c.src, "-c", "copy", "-movflags", "+faststart"], c.out("_web", ".mp4"), c.dur)]
+
+
+SOCIAL = {  # name -> (width, height, fps or 0 = keep, max seconds hint)
+    "TikTok (9:16 1080x1920)": (1080, 1920, 30, "tiktok"),
+    "Instagram Reels (9:16 1080x1920)": (1080, 1920, 30, "reels"),
+    "YouTube Shorts (9:16 1080x1920)": (1080, 1920, 30, "shorts"),
+    "YouTube (16:9 1080p)": (1920, 1080, 0, "youtube"),
+    "X / Twitter (16:9 1280x720)": (1280, 720, 30, "x"),
+    "Instagram feed (4:5 1080x1350)": (1080, 1350, 30, "feed"),
+}
+
+
+@op("Format & Quality", "social", "Export for social media (TikTok / Reels / Shorts / YouTube / X)",
+    [O("platform", "Platform", "choice", "TikTok (9:16 1080x1920)", list(SOCIAL)),
+     O("fill", "If the shape does not match", "choice", "Blurred background", ["Blurred background", "Black bars", "Crop to fill"])],
+    tip="One click: right size, H.264 + AAC, 8-bit, fast-start MP4 - accepted by the platform without re-processing trouble.")
+def b_social(o, c):
+    W, H, fps, tag = SOCIAL[o["platform"]]
+    f = o["fill"]
+    tail = f",fps={fps}" if fps else ""
+    if f.startswith("Blurred"):
+        fc = (f"[0:v]split[a][b];[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=25:5[bg];"
+              f"[b]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1{tail}[v]")
+    elif f.startswith("Black"):
+        fc = f"[0:v]scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1{tail}[v]"
+    else:
+        fc = f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1{tail}[v]"
+    a = ["-i", c.src, "-filter_complex", fc, "-map", "[v]", "-map", "0:a?"] + vcodec(21)
+    if not STATE["gpu"]:
+        a += ["-profile:v", "high"]
+    a += ["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-movflags", "+faststart"]
+    return [job(a, c.out(f"_{tag}", ".mp4"), c.dur)]
 
 
 @op("Format & Quality", "compress", "Compress to a target size",
