@@ -40,7 +40,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Quick self-test of the engine
-        run: python om_video_studio.py --selftest trim,split,convert,compress,extract,thumb
+        run: python om_video_studio.py --selftest trim,split,convert,compress,extract,thumb,extras
 
       - name: Build app with PyInstaller
         shell: cmd

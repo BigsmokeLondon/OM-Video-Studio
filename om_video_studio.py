@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. Video Studio"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -441,13 +441,17 @@ def b_resize(o, c):
     return [job(["-i", c.src, "-vf", f"scale={o['width']}:{o['height']}"] + vcodec() + AAC, c.out(f"_{o['width']}w", ".mp4"), c.dur)]
 
 
+def crop_filter(o):
+    e = lambda v: v.replace(",", "\\,")  # noqa: E731  commas separate filters, so escape them in expressions
+    return f"crop={e(o['w'])}:{e(o['h'])}:{e(o['x'])}:{e(o['y'])}"
+
+
 @op("Video", "crop", "Crop",
     [O("w", "Width", default="min(iw,ih)"), O("h", "Height", default="min(iw,ih)"),
      O("x", "X offset", default="(iw-ow)/2"), O("y", "Y offset", default="(ih-oh)/2")],
     tip="Defaults crop a centred square. Expressions like iw/2 work.")
 def b_crop(o, c):
-    e = lambda v: v.replace(",", "\\,")  # noqa: E731  commas separate filters, so escape them in expressions
-    return [job(["-i", c.src, "-vf", f"crop={e(o['w'])}:{e(o['h'])}:{e(o['x'])}:{e(o['y'])}"] + vcodec() + AAC, c.out("_crop", ".mp4"), c.dur)]
+    return [job(["-i", c.src, "-vf", crop_filter(o)] + vcodec() + AAC, c.out("_crop", ".mp4"), c.dur)]
 
 
 @op("Video", "rotate", "Rotate",
@@ -1242,16 +1246,29 @@ def kind_exts(kind):
     return {"video": VIDEO_EXT, "audio": AUDIO_EXT, "image": IMAGE_EXT, "sub": SUB_EXT}.get(kind, VIDEO_EXT | AUDIO_EXT)
 
 
+LAST_CMDS = []  # ffmpeg commands (copy-paste form) of the file most recently processed
+
+
+def job_cmd(j, clean=False):
+    """Full ffmpeg argument list for a job. clean=True gives the tidy copy-paste form."""
+    if clean:
+        cmd = ["ffmpeg", "-y"] + j["args"]
+    else:
+        level = "info" if j.get("info") else "warning"
+        cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", level, "-nostats", "-progress", "pipe:1"] + j["args"]
+    if j.get("out") and not j.get("raw_out"):
+        cmd.append(j["out"])
+    return cmd
+
+
 def run_job(j, log, progress, cancel, show_cmd=False):
     """Runs one job dict. Returns the process return code."""
     if j.get("func"):
         return j["func"](log)
     if j.get("mkdir"):
         os.makedirs(j["mkdir"], exist_ok=True)
-    level = "info" if j.get("info") else "warning"
-    cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", level, "-nostats", "-progress", "pipe:1"] + j["args"]
-    if j.get("out") and not j.get("raw_out"):
-        cmd.append(j["out"])
+    cmd = job_cmd(j)
+    LAST_CMDS.append(subprocess.list2cmdline(job_cmd(j, clean=True)))
     if show_cmd:
         log("> " + subprocess.list2cmdline(cmd))
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
@@ -1304,6 +1321,7 @@ def execute(spec, opts, files, outdir, log, progress, cancel, show_cmd=False):
             if cancel.is_set():
                 break
             log(f"\n=== {Path(f).name} ===")
+            del LAST_CMDS[:]
             try:
                 c = Ctx(f, outdir, tmp)
                 if not kind_ok(spec, c.info, c.ext):
@@ -1379,6 +1397,85 @@ def convert_opts(spec, raw):
 
 
 # --------------------------------------------------------------------------- settings
+# --------------------------------------------------------------------------- copy command / preview / queue (engine)
+def find_op(op_id):
+    return next((s for s in OPS if s["id"] == op_id), None)
+
+
+def format_commands(spec, opts, f, outdir=None):
+    """The ffmpeg command line(s) an operation would run on file f, as text to paste into a terminal. Runs nothing."""
+    tmp = tempfile.mkdtemp(prefix="ffstudio_")
+    try:
+        c = Ctx(f, outdir, tmp)
+        if not kind_ok(spec, c.info, c.ext):
+            raise ValueError("This operation does not apply to this kind of file.")
+        out = []
+        for j in spec["fn"](opts, c):
+            if j.get("func"):
+                out.append("REM (built-in step - no ffmpeg command)")
+            else:
+                out.append(subprocess.list2cmdline(job_cmd(j, clean=True)))
+        return "\n".join(out)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def grab_frame(path, t, out_png, vf="", box=(420, 300)):
+    """Save one frame at time t (seconds) as a PNG scaled to fit inside box. Returns True on success."""
+    scale = f"scale=w={box[0]}:h={box[1]}:force_original_aspect_ratio=decrease"
+    chain = (vf + "," if vf else "") + scale
+    cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-ss", f"{max(0.0, t):.3f}", "-i", path,
+           "-frames:v", "1", "-vf", chain, out_png]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=30, creationflags=NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0 and os.path.exists(out_png) and os.path.getsize(out_png) > 0
+
+
+def resolve_files(spec, opts, path, multi=None):
+    """Work out which files an operation runs on. Returns (files, opts, error_message_or_None)."""
+    needs_extra = any(s["type"] in ("file", "files") for s in spec["opts"])
+    if multi:
+        files = [f for f in multi if os.path.isfile(f)]
+        if not files:
+            return [], opts, "None of the selected files exist."
+    elif not path or not os.path.exists(path):
+        return [], opts, "Choose a file or a folder first."
+    elif os.path.isdir(path):
+        exts = kind_exts(spec["kind"])
+        files = sorted(str(f) for f in Path(path).iterdir() if f.is_file() and f.suffix.lower() in exts)
+        if not files:
+            return [], opts, "No matching files in that folder."
+    else:
+        return [path], opts, None
+    if needs_extra and not spec.get("folder_one"):
+        return [], opts, "This operation needs extra files, so it can't run on several files at once. Pick a single file."
+    if spec.get("folder_one"):
+        opts = dict(opts)
+        opts["files"] = list(opts.get("files", [])) + files[1:] if multi else files[1:]
+        files = files[:1]
+    return files, opts, None
+
+
+def run_queue(items, log, progress, cancel, show_cmd=False):
+    """items: list of dicts {spec, opts, files, outdir}. Runs them one after another. Returns (ok, fail, outputs)."""
+    ok = fail = 0
+    outs = []
+    n = len(items)
+    for i, it in enumerate(items):
+        if cancel.is_set():
+            log(f"Queue cancelled - {n - i} job(s) not started.")
+            break
+        log(f"\n##### Queue {i + 1}/{n}: {it['spec']['label']}  ({len(it['files'])} file{'s' if len(it['files']) != 1 else ''})")
+        o_, f_, outs_ = execute(it["spec"], it["opts"], it["files"], it.get("outdir"), log,
+                                lambda fr, i=i: progress((i + fr) / n), cancel, show_cmd)
+        ok, fail = ok + o_, fail + f_
+        outs.extend(outs_)
+    progress(1.0)
+    return ok, fail, outs
+
+
 def load_settings():
     try:
         return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
@@ -1537,7 +1634,7 @@ def gui():
     root.report_callback_exception = _tk_error
     write_log(f"--- {APP} v{VERSION} started ({'installed exe' if FROZEN else 'script'}, python {sys.version.split()[0]}, ffmpeg: {ff_version() if find_tool('ffmpeg') else 'not found'}) ---")
     wrapped, themed_text, themed_canvas = [], [], []
-    state = {"running": False, "outputs": [], "outdir": None, "theme": theme}
+    state = {"running": False, "outputs": [], "outdir": None, "theme": theme, "multi": None, "multi_label": "", "queue": []}
 
     def pal():
         return PALETTE[state["theme"]]
@@ -1651,6 +1748,7 @@ def gui():
     ent.grid(row=0, column=1, sticky="ew", padx=8)
 
     def set_path(p):
+        state["multi"] = None
         path_var.set(p)
         refresh_info()
         if os.path.isfile(p):
@@ -1659,12 +1757,25 @@ def gui():
             recent["values"] = settings["recent"]
             save_settings(settings)
 
+    def set_multi(files):
+        files = [os.path.normpath(f) for f in files]
+        state["multi"] = files
+        state["multi_label"] = f"{len(files)} files selected: " + ", ".join(Path(f).name for f in files[:3]) + (" ..." if len(files) > 3 else "")
+        path_var.set(state["multi_label"])
+        info_var.set(f"Batch of {len(files)} files. Pick an operation to run it on all of them (or add it to the queue).")
+
+    def current_multi():
+        return state["multi"] if state["multi"] and path_var.get() == state["multi_label"] else None
+
     def browse_file():
         ft = [("Media files", " ".join("*" + e for e in sorted(VIDEO_EXT | AUDIO_EXT | IMAGE_EXT | SUB_EXT))), ("All files", "*.*")]
-        p = filedialog.askopenfilename(title="Choose a file", filetypes=ft, initialdir=settings.get("lastdir") or None)
-        if p:
-            settings["lastdir"] = str(Path(p).parent)
-            set_path(os.path.normpath(p))
+        ps = filedialog.askopenfilenames(title="Choose one or more files", filetypes=ft, initialdir=settings.get("lastdir") or None)
+        if ps:
+            settings["lastdir"] = str(Path(ps[0]).parent)
+            if len(ps) > 1:
+                set_multi(ps)
+            else:
+                set_path(os.path.normpath(ps[0]))
 
     def browse_folder():
         p = filedialog.askdirectory(title="Choose a folder (batch)", initialdir=settings.get("lastdir") or None)
@@ -1672,7 +1783,7 @@ def gui():
             settings["lastdir"] = p
             set_path(os.path.normpath(p))
 
-    ttk.Button(card, text="Browse file…", command=browse_file).grid(row=0, column=2)
+    ttk.Button(card, text="Browse files…", command=browse_file).grid(row=0, column=2)
     ttk.Button(card, text="Batch folder…", command=browse_folder).grid(row=0, column=3, padx=(6, 0))
     ttk.Label(card, text="Recent:").grid(row=1, column=0, sticky="w", pady=(6, 0))
     recent = ttk.Combobox(card, values=settings.get("recent", []), state="readonly")
@@ -1697,6 +1808,8 @@ def gui():
     ent.bind("<Return>", lambda e: refresh_info())
 
     def refresh_info():
+        if current_multi():
+            return
         p = path_var.get().strip().strip('"')
         if not have_ff:
             info_var.set("ffmpeg is not installed yet. Use the Install ffmpeg prompt (or restart the app) to download it.")
@@ -1726,6 +1839,9 @@ def gui():
     cancel_btn.pack(side="left")
     open_btn = ttk.Button(row, text="Open output folder", state="disabled", command=lambda: open_folder())
     open_btn.pack(side="left", padx=6)
+    queue_btn = ttk.Button(row, text="Queue (0)", command=lambda: open_queue())
+    queue_btn.pack(side="left")
+    ttk.Button(row, text="Copy last command", command=lambda: copy_last()).pack(side="left", padx=6)
     ttk.Checkbutton(row, text="Show ffmpeg commands", variable=cmd_var).pack(side="left", padx=10)
     if gpu_available:
         ttk.Checkbutton(row, text="Use GPU (NVENC)", variable=gpu_var, command=lambda: STATE.update(gpu=gpu_var.get())).pack(side="left")
@@ -1840,9 +1956,12 @@ def gui():
         except Exception:  # noqa: BLE001
             files = [event.data]
         if files:
-            set_path(os.path.normpath(files[0]))
-            if len(files) > 1:
-                log(f"You dropped {len(files)} items; using the first. Use 'Batch folder' to process a whole folder.")
+            if len(files) > 1 and all(os.path.isfile(f) for f in files):
+                set_multi(files)
+            else:
+                set_path(os.path.normpath(files[0]))
+                if len(files) > 1:
+                    log(f"You dropped {len(files)} items including a folder; using the first. Drop several files together to batch them.")
 
     def register_drop_tree(w):
         if not dnd:
@@ -1883,6 +2002,11 @@ def gui():
                     bar["value"] = val * 1000
                 elif kind == "info":
                     info_var.set(val)
+                elif kind == "call":
+                    try:
+                        val()
+                    except Exception:  # noqa: BLE001
+                        pass
                 elif kind == "done":
                     state["running"] = False
                     cancel_btn.configure(state="disabled")
@@ -1908,9 +2032,6 @@ def gui():
 
     # ------------------------------------------------------------------ option dialog
     def open_dialog(spec):
-        if state["running"]:
-            messagebox.showinfo(APP, "A job is already running.")
-            return
         top_ = tk.Toplevel(root)
         top_.title(spec["label"])
         top_.transient(root)
@@ -1928,6 +2049,7 @@ def gui():
             r += 1
         last = settings.get("last", {}).get(spec["id"], {})
         getters = {}
+        tkvars = {}
         for s in spec["opts"]:
             ttk.Label(frm, text=s["label"]).grid(row=r, column=0, sticky="w", pady=4, padx=(0, 12))
             t = s["type"]
@@ -1938,15 +2060,18 @@ def gui():
                 v = tk.StringVar(value=dflt)
                 ttk.Combobox(frm, textvariable=v, values=s["choices"], state="readonly", width=38).grid(row=r, column=1, columnspan=2, sticky="ew")
                 getters[s["key"]] = v.get
+                tkvars[s["key"]] = v
             elif t == "bool":
                 v = tk.BooleanVar(value=bool(dflt))
                 ttk.Checkbutton(frm, variable=v).grid(row=r, column=1, sticky="w")
                 getters[s["key"]] = v.get
+                tkvars[s["key"]] = v
             elif t == "file":
                 v = tk.StringVar()
                 ttk.Entry(frm, textvariable=v, width=34).grid(row=r, column=1, sticky="ew")
                 ttk.Button(frm, text="…", width=3, command=lambda v=v, t=s["ftype"]: v.set(filedialog.askopenfilename(filetypes=ft_for(t)) or v.get())).grid(row=r, column=2, padx=4)
                 getters[s["key"]] = v.get
+                tkvars[s["key"]] = v
             elif t == "files":
                 lb = tk.Listbox(frm, height=5, width=40, relief="flat", bg=pal()["log_bg"], fg=pal()["log_fg"], selectbackground=pal()["sel"], highlightthickness=1)
                 lb.grid(row=r, column=1, sticky="ew")
@@ -1959,6 +2084,7 @@ def gui():
                 v = tk.StringVar(value=str(dflt))
                 ttk.Entry(frm, textvariable=v, width=40).grid(row=r, column=1, columnspan=2, sticky="ew")
                 getters[s["key"]] = v.get
+                tkvars[s["key"]] = v
             r += 1
         if not spec["opts"]:
             ttk.Label(frm, text="No options - just press Run.").grid(row=r, column=0, columnspan=3, sticky="w", pady=6)
@@ -1968,12 +2094,25 @@ def gui():
         bf = ttk.Frame(frm)
         bf.grid(row=r, column=1, columnspan=2, sticky="e", pady=(10, 0))
 
-        def go():
+        def collect():
             raw = {k: g() for k, g in getters.items()}
             try:
                 opts = convert_opts(spec, raw)
             except ValueError:
                 messagebox.showerror(APP, "One of the numbers is not valid.", parent=top_)
+                return None
+            return raw, opts
+
+        def go(mode="run"):
+            if mode == "run" and state["running"]:
+                messagebox.showinfo(APP, "A job is already running. Use 'Add to queue' to line this one up.", parent=top_)
+                return
+            got = collect()
+            if got is None:
+                return
+            raw, opts = got
+            prep = prepare(spec, opts, top_)
+            if prep is None:
                 return
             favs = [i for i in settings.get("favs", []) if i != spec["id"]]
             if fav_var.get():
@@ -1986,11 +2125,37 @@ def gui():
             top_.destroy()
             if changed:
                 build_cat("Favourites")
-            start(spec, opts)
+            if mode == "queue":
+                enqueue(spec, prep)
+            else:
+                start(spec, prep)
+
+        def copy_cmd():
+            got = collect()
+            if got is None:
+                return
+            prep = prepare(spec, got[1], top_)
+            if prep is None:
+                return
+            files, opts2, outdir = prep
+            try:
+                text = format_commands(spec, opts2, files[0], outdir)
+            except Exception as e:  # noqa: BLE001
+                messagebox.showerror(APP, f"Couldn't build the command: {e}", parent=top_)
+                return
+            copy_text(text, "the ffmpeg command" + (f" (for {Path(files[0]).name})" if len(files) > 1 else ""))
+            log("Copied ffmpeg command:\n" + text)
+        ttk.Button(bf, text="Copy ffmpeg command", command=copy_cmd).pack(side="left", padx=(0, 6))
+        ttk.Button(bf, text="Add to queue", command=lambda: go("queue")).pack(side="left", padx=(0, 6))
         ttk.Button(bf, text="Cancel", command=top_.destroy).pack(side="left", padx=6)
         ttk.Button(bf, text="Run", style=run_style, command=go).pack(side="left")
         top_.bind("<Return>", lambda e: go())
         top_.bind("<Escape>", lambda e: top_.destroy())
+        if spec["id"] in ("trim", "crop"):
+            try:
+                attach_preview(top_, frm, spec, getters, tkvars, r + 1)
+            except Exception as e:  # noqa: BLE001
+                write_log(f"preview setup failed: {e!r}")
         try:
             top_.update_idletasks()
             x = root.winfo_rootx() + max(0, (root.winfo_width() - top_.winfo_reqwidth()) // 2)
@@ -1999,44 +2164,261 @@ def gui():
         except Exception:  # noqa: BLE001
             pass
 
-    def start(spec, opts):
+    def prepare(spec, opts, parent=None):
+        """Validate input and work out the files. Returns (files, opts, outdir) or None (after telling the user)."""
         if not have_ff:
-            messagebox.showerror(APP, "ffmpeg is not installed yet. Restart the app and choose Install ffmpeg when asked.")
-            return
+            messagebox.showerror(APP, "ffmpeg is not installed yet. Restart the app and choose Install ffmpeg when asked.", parent=parent)
+            return None
         p = path_var.get().strip().strip('"')
-        if not p or not os.path.exists(p):
-            messagebox.showwarning(APP, "Choose a file or a folder first.")
-            return
-        if os.path.isdir(p):
-            if any(s["type"] in ("file", "files") for s in spec["opts"]) and not spec.get("folder_one"):
-                messagebox.showwarning(APP, "This operation needs extra files, so it can't run on a whole folder. Pick a single file.")
-                return
-            exts = kind_exts(spec["kind"])
-            files = sorted(str(f) for f in Path(p).iterdir() if f.is_file() and f.suffix.lower() in exts)
-            if not files:
-                messagebox.showinfo(APP, "No matching files in that folder.")
-                return
-            if spec.get("folder_one"):
-                opts = dict(opts)
-                opts["files"] = files[1:]
-                files = files[:1]
-        else:
-            files = [p]
+        files, opts2, err = resolve_files(spec, opts, p, current_multi())
+        if err:
+            messagebox.showwarning(APP, err, parent=parent)
+            return None
         outdir = out_var.get().strip() or None
         if outdir:
             os.makedirs(outdir, exist_ok=True)
+        return files, opts2, outdir
+
+    def begin_run(label):
         state.update(running=True, outputs=[])
         cancel.clear()
         cancel_btn.configure(state="normal")
         open_btn.configure(state="disabled")
         bar["value"] = 0
-        status_var.set(f"Running: {spec['label']}")
+        status_var.set(f"Running: {label}")
+
+    def start(spec, prep):
+        files, opts, outdir = prep
+        begin_run(spec["label"])
         log(f"\n##### {spec['label']}  ({len(files)} file{'s' if len(files) > 1 else ''})")
 
         def work():
             res = execute(spec, opts, files, outdir, log, lambda f: q.put(("prog", f)), cancel, cmd_var.get())
             q.put(("done", res))
         threading.Thread(target=work, daemon=True).start()
+
+    # ------------------------------------------------------------------ copy command
+    def copy_text(text, what):
+        try:
+            root.clipboard_clear()
+            root.clipboard_append(text)
+            root.update()
+            status_var.set(f"Copied {what} to the clipboard")
+        except tk.TclError:
+            messagebox.showinfo(APP, "Couldn't reach the clipboard. The command is in the log below instead.")
+
+    def copy_last():
+        if not LAST_CMDS:
+            messagebox.showinfo(APP, "Nothing to copy yet - run something first (or use 'Copy ffmpeg command' in an operation's window).")
+            return
+        copy_text("\n".join(LAST_CMDS), "the last ffmpeg command")
+
+    # ------------------------------------------------------------------ job queue
+    qwin = {"w": None, "refresh": None}
+
+    def refresh_queue_btn():
+        queue_btn.configure(text=f"Queue ({len(state['queue'])})")
+        if qwin["refresh"]:
+            try:
+                qwin["refresh"]()
+            except tk.TclError:
+                pass
+
+    def enqueue(spec, prep):
+        files, opts, outdir = prep
+        state["queue"].append(dict(spec=spec, opts=opts, files=files, outdir=outdir))
+        refresh_queue_btn()
+        msg = f"Added to queue: {spec['label']} ({len(files)} file{'s' if len(files) != 1 else ''}) - {len(state['queue'])} waiting."
+        status_var.set(msg)
+        log(msg)
+
+    def run_queue_gui():
+        if state["running"]:
+            messagebox.showinfo(APP, "A job is already running. Start the queue when it finishes.")
+            return
+        if not state["queue"]:
+            messagebox.showinfo(APP, "The queue is empty.")
+            return
+        items = list(state["queue"])
+        state["queue"] = []
+        refresh_queue_btn()
+        begin_run(f"queue of {len(items)} job(s)")
+
+        def work():
+            res = run_queue(items, log, lambda f: q.put(("prog", f)), cancel, cmd_var.get())
+            q.put(("done", res))
+        threading.Thread(target=work, daemon=True).start()
+
+    def open_queue():
+        if qwin["w"] is not None:
+            try:
+                if qwin["w"].winfo_exists():
+                    qwin["w"].lift()
+                    return
+            except tk.TclError:
+                pass
+        w = tk.Toplevel(root)
+        qwin["w"] = w
+        w.title("Job queue")
+        w.transient(root)
+        try:
+            w.configure(bg=pal()["bg"])
+        except tk.TclError:
+            pass
+        fr = ttk.Frame(w, padding=16)
+        fr.pack(fill="both", expand=True)
+        ttk.Label(fr, text="Job queue", style="Head.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(fr, text="Jobs run one after another, in this order. Add jobs with 'Add to queue' in any operation's window.",
+                  style="Muted.TLabel", wraplength=560).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 8))
+        lb = tk.Listbox(fr, height=12, width=78, relief="flat", bg=pal()["log_bg"], fg=pal()["log_fg"],
+                        selectbackground=pal()["sel"], highlightthickness=1, activestyle="none")
+        lb.grid(row=2, column=0, sticky="nsew")
+        side_ = ttk.Frame(fr)
+        side_.grid(row=2, column=1, sticky="n", padx=(10, 0))
+
+        def fill():
+            sel = lb.curselection()
+            lb.delete(0, "end")
+            for i, it in enumerate(state["queue"]):
+                n = len(it["files"])
+                first = Path(it["files"][0]).name
+                lb.insert("end", f"{i + 1}.  {it['spec']['label']}  -  " + (f"{n} files, starting {first}" if n > 1 else first))
+            if sel and sel[0] < lb.size():
+                lb.selection_set(sel[0])
+
+        qwin["refresh"] = fill
+
+        def move(d):
+            sel = lb.curselection()
+            if not sel:
+                return
+            i, j = sel[0], sel[0] + d
+            qq = state["queue"]
+            if 0 <= j < len(qq):
+                qq[i], qq[j] = qq[j], qq[i]
+                fill()
+                lb.selection_clear(0, "end")
+                lb.selection_set(j)
+
+        def remove():
+            for i in reversed(lb.curselection()):
+                del state["queue"][i]
+            refresh_queue_btn()
+
+        def clear():
+            state["queue"] = []
+            refresh_queue_btn()
+
+        def run_it():
+            if state["running"]:
+                messagebox.showinfo(APP, "A job is already running. Start the queue when it finishes.", parent=w)
+                return
+            if not state["queue"]:
+                messagebox.showinfo(APP, "The queue is empty.", parent=w)
+                return
+            w.destroy()
+            run_queue_gui()
+        for text, cmd in (("Move up", lambda: move(-1)), ("Move down", lambda: move(1)), ("Remove", remove), ("Clear all", clear)):
+            ttk.Button(side_, text=text, command=cmd, width=12).pack(pady=2)
+        bf2 = ttk.Frame(fr)
+        bf2.grid(row=3, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(bf2, text="Close", command=w.destroy).pack(side="left", padx=6)
+        ttk.Button(bf2, text="Run queue", style=run_style, command=run_it).pack(side="left")
+        w.bind("<Escape>", lambda e: w.destroy())
+        w.bind("<Destroy>", lambda e: qwin.update(refresh=None) if e.widget is w else None)
+        fill()
+
+    # ------------------------------------------------------------------ live preview (trim / crop)
+    def attach_preview(top_, frm, spec, getters, tkvars, nrows):
+        src = (current_multi() or [path_var.get().strip().strip('"')])[0]
+        if os.path.isdir(src):
+            vids = [str(f) for f in sorted(Path(src).iterdir()) if f.is_file() and f.suffix.lower() in VIDEO_EXT]
+            src = vids[0] if vids else ""
+        if not have_ff or not src or not os.path.isfile(src):
+            return
+        box = ttk.LabelFrame(frm, text="Live preview", padding=8)
+        box.grid(row=0, column=3, rowspan=max(nrows, 4), sticky="n", padx=(18, 0))
+        names = ["Start frame", "End frame"] if spec["id"] == "trim" else ["Result of the crop"]
+        labels = []
+        for nm in names:
+            ttk.Label(box, text=nm, style="Muted.TLabel").pack(anchor="w")
+            lab = ttk.Label(box, text="loading…", anchor="center")
+            lab.pack(pady=(0, 8))
+            labels.append(lab)
+        note = ttk.Label(box, text="", style="Muted.TLabel", wraplength=420)
+        note.pack(anchor="w")
+        tmpd = tempfile.mkdtemp(prefix="ffprev_")
+        st = {"n": 0, "after": None, "imgs": []}
+
+        def work(n, raw):
+            paths, msg = [], ""
+            try:
+                dur = probe(src)["dur"] or 0
+                if spec["id"] == "trim":
+                    s_ = tsec(raw["start"] or "0")
+                    e_ = tsec(raw["end"]) if str(raw["end"]).strip() else dur
+                    if dur:
+                        s_, e_ = min(s_, max(0.0, dur - 0.1)), min(e_, dur)
+                    if e_ <= s_:
+                        msg = "The end must be after the start."
+                    else:
+                        msg = f"Clip length: {e_ - s_:.1f} s  (video is {dur:.1f} s)" if dur else f"Clip length: {e_ - s_:.1f} s"
+                        for i, t in enumerate((s_, max(s_, e_ - 0.1))):
+                            f = os.path.join(tmpd, f"t{n}_{i}.png")
+                            paths.append(f if grab_frame(src, t, f) else None)
+                else:
+                    o = {k: (str(raw[k]).strip() or next(x for x in spec["opts"] if x["key"] == k)["default"]) for k in ("w", "h", "x", "y")}
+                    f = os.path.join(tmpd, f"c{n}.png")
+                    ok = grab_frame(src, dur / 3 if dur else 0, f, crop_filter(o))
+                    paths.append(f if ok else None)
+                    msg = "" if ok else "These crop values don't work yet - check the width, height and offsets."
+            except Exception as e:  # noqa: BLE001
+                msg = f"No preview: {e}"
+            q.put(("call", lambda: show(n, paths, msg)))
+
+        def show(n, paths, msg):
+            if n != st["n"] or not top_.winfo_exists():
+                return
+            st["imgs"] = []
+            for lab, pth in zip(labels, paths + [None] * len(labels)):
+                try:
+                    img = tk.PhotoImage(file=pth) if pth else None
+                except tk.TclError:
+                    img = None
+                if img:
+                    st["imgs"].append(img)
+                    lab.configure(image=img, text="")
+                else:
+                    lab.configure(image="", text="(no preview)")
+            note.configure(text=msg)
+
+        def kick():
+            st["after"] = None
+            if not top_.winfo_exists():
+                return
+            st["n"] += 1
+            try:
+                raw = {k: g() for k, g in getters.items()}
+            except Exception:  # noqa: BLE001
+                return
+            note.configure(text="Updating…")
+            threading.Thread(target=work, args=(st["n"], raw), daemon=True).start()
+
+        def later(*_):
+            if st["after"]:
+                try:
+                    top_.after_cancel(st["after"])
+                except tk.TclError:
+                    pass
+            st["after"] = top_.after(600, kick)
+
+        def cleanup(e):
+            if e.widget is top_:
+                shutil.rmtree(tmpd, ignore_errors=True)
+        for v in tkvars.values():
+            v.trace_add("write", later)
+        top_.bind("<Destroy>", cleanup, add="+")
+        kick()
 
     # ------------------------------------------------------------------ finish up
     for cat in ["Favourites"] + CATEGORIES:
@@ -2129,7 +2511,68 @@ def gui():
 
 
 # --------------------------------------------------------------------------- self-test
+def selftest_extras():
+    """Tests for copy-command, preview frames, file resolving and the job queue."""
+    if not refresh_tools():
+        print("ffmpeg/ffprobe not found")
+        return 1
+    work = Path(tempfile.mkdtemp(prefix="ffextra_"))
+    fails = []
+
+    def check(name, cond, detail=""):
+        print(("ok   " if cond else "FAIL ") + name, detail if not cond else "", flush=True)
+        if not cond:
+            fails.append(name)
+    clip, clip2 = work / "a clip.mp4", work / "b.mp4"
+    for c_, sz in ((clip, "640x360"), (clip2, "320x240")):
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc=duration=4:size={sz}:rate=25", "-f", "lavfi",
+                        "-i", "sine=duration=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(c_)], check=True)
+    trim, crop = find_op("trim"), find_op("crop")
+    check("find_op", trim is not None and crop is not None and find_op("nope") is None)
+    topts = convert_opts(trim, {**default_opts(trim), "start": "1", "end": "3"})
+    text = format_commands(trim, topts, str(clip), str(work / "out"))
+    check("format_commands trim", text.startswith("ffmpeg -y") and "-ss 1" in text and "a clip_trim.mp4" in text and '"' in text, text)
+    check("format_commands has no internal flags", "-progress" not in text and "-nostats" not in text, text)
+    copts = convert_opts(crop, {**default_opts(crop), "w": "min(iw,ih)", "h": "ih/2"})
+    check("crop_filter escapes commas", "min(iw\\,ih)" in crop_filter(copts), crop_filter(copts))
+    f1, f2 = work / "f1.png", work / "f2.png"
+    check("grab_frame plain", grab_frame(str(clip), 1.0, str(f1)) and f1.stat().st_size > 500)
+    check("grab_frame crop", grab_frame(str(clip), 1.0, str(f2), crop_filter(copts)) and f2.stat().st_size > 500)
+    check("grab_frame bad filter fails cleanly", not grab_frame(str(clip), 1.0, str(work / "f3.png"), "crop=notanumber"))
+    check("grab_frame past end does not hang", isinstance(grab_frame(str(clip), 99.0, str(work / "f4.png")), bool))
+    check("resolve single", resolve_files(trim, {}, str(clip))[0] == [str(clip)])
+    check("resolve missing", resolve_files(trim, {}, str(work / "none.mp4"))[2] is not None)
+    fl, _, err = resolve_files(trim, {}, "", [str(clip), str(clip2)])
+    check("resolve multi", fl == [str(clip), str(clip2)] and err is None)
+    fl, _, err = resolve_files(trim, {}, str(work))
+    check("resolve folder", len(fl) == 2 and err is None, str(fl))
+    join = find_op("join")
+    fl, o2, err = resolve_files(join, {"files": []}, "", [str(clip), str(clip2)])
+    check("resolve folder_one with multi", fl == [str(clip)] and o2["files"] == [str(clip2)], str((fl, o2)))
+    lines = []
+    ev = threading.Event()
+    prog = []
+    items = [dict(spec=trim, opts=topts, files=[str(clip), str(clip2)], outdir=str(work / "q")),
+             dict(spec=crop, opts=copts, files=[str(clip)], outdir=str(work / "q"))]
+    ok, fail, outs = run_queue(items, lines.append, prog.append, ev)
+    check("run_queue results", ok == 3 and fail == 0 and len(outs) == 3 and all(os.path.exists(o) for o in outs), str((ok, fail, outs, lines[-5:])))
+    check("run_queue progress ends at 1", prog and prog[-1] == 1.0)
+    check("LAST_CMDS filled", len(LAST_CMDS) == 1 and LAST_CMDS[0].startswith("ffmpeg -y"), str(LAST_CMDS))
+    ev.set()
+    ok, fail, outs = run_queue(items, lines.append, lambda f: None, ev)
+    check("run_queue honours cancel", ok == 0 and fail == 0 and outs == [])
+    shutil.rmtree(work, ignore_errors=True)
+    print("EXTRAS", "FAILED: " + ", ".join(fails) if fails else "all passed")
+    return 1 if fails else 0
+
+
 def selftest():
+    wanted = [x for a_ in sys.argv[2:] if not a_.startswith("--") for x in a_.split(",") if x]
+    if "extras" in wanted:
+        wanted.remove("extras")
+        sys.argv = sys.argv[:2] + [",".join(wanted)] + [a_ for a_ in sys.argv[3:] if a_.startswith("--")] if wanted else sys.argv[:2]
+        rc = selftest_extras()
+        return rc if not wanted else (rc or selftest())
     if not refresh_tools():
         print("ffmpeg/ffprobe not found")
         return 1
