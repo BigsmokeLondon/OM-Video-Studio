@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. Video Studio"
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -381,7 +381,7 @@ def b_trim(o, c):
 
 @op("Video", "join", "Join clips into one",
     [O("files", "Clips to append after the selected file", "files")],
-    tip="Selected file goes first. Clips are scaled to the first one's size. With a batch folder, joins every video in it.", folder_one=True)
+    tip="Easiest: leave the Input box empty and add ALL your clips below, in order (Add… or Add folder…). Or select a first clip and the list is appended after it. Clips are scaled to the first one's size.", folder_one=True)
 def b_join(o, c):
     files = [c.src] + list(o["files"])
     n = len(files)
@@ -915,7 +915,7 @@ def b_pip(o, c):
 @op("Combine", "grid", "Side-by-side / grid of videos",
     [O("files", "Other videos to add", "files"), O("layout", "Layout", "choice", "Side by side", ["Side by side", "Stacked", "Grid (2 columns)"]),
      O("cw", "Width of each cell", "int", 640)],
-    tip="The selected file is first. Audio comes from the first video.", folder_one=True)
+    tip="Leave the Input box empty and add all your clips below, in order - or select the first clip and add the rest. Audio comes from the first video.", folder_one=True)
 def b_grid(o, c):
     files = [c.src] + list(o["files"])
     n = len(files)
@@ -941,7 +941,7 @@ def b_grid(o, c):
 @op("Combine", "crossfade", "Join clips with crossfade transitions",
     [O("files", "Clips to append after the selected file", "files"), O("tr", "Transition length (seconds)", "float", 1.0),
      O("style", "Style", "choice", "fade", ["fade", "dissolve", "fadeblack", "wipeleft", "wiperight", "slideleft", "slideright", "circleopen", "circleclose", "pixelize", "radial"])],
-    tip="Each clip must be longer than the transition.", folder_one=True)
+    tip="Leave the Input box empty and add all your clips below, in order - or select the first clip and add the rest. Each clip must be longer than the transition.", folder_one=True)
 def b_crossfade(o, c):
     files = [c.src] + list(o["files"])
     n = len(files)
@@ -1528,9 +1528,9 @@ def resolve_files(spec, opts, path, multi=None):
     """Work out which files an operation runs on. Returns (files, opts, error_message_or_None)."""
     needs_extra = any(s["type"] in ("file", "files") for s in spec["opts"])
     extras = list(opts.get("files", [])) if spec.get("folder_one") else []
-    if (spec.get("folder_one") and spec["kind"] == "image" and extras and not multi
-            and (not path or not os.path.exists(path) or (os.path.isfile(path) and Path(path).suffix.lower() not in IMAGE_EXT))):
-        # photos were added in the window and the input box holds something else (or nothing): use the photos
+    if (spec.get("folder_one") and extras and not multi
+            and (not path or not os.path.exists(path) or (os.path.isfile(path) and Path(path).suffix.lower() not in kind_exts(spec["kind"])))):
+        # clips/photos were listed in the window and the input box is empty or holds something else: use the listed ones
         return [extras[0]], {**opts, "files": extras[1:]}, None
     if multi:
         files = [f for f in multi if os.path.isfile(f)]
@@ -2860,6 +2860,14 @@ def selftest_extras():
     fl, o3, err = resolve_files(ss, sopts, "")
     ok_, fail_, outs_ = execute(ss, o3, fl, str(work / "ss"), lines_.append if False else (lambda m_: None), lambda f: None, threading.Event())
     check("slideshow runs from listed photos", ok_ == 1 and fail_ == 0 and outs_ and os.path.exists(outs_[0]), str((ok_, fail_, outs_)))
+    jn = find_op("join")
+    two = convert_opts(jn, {**default_opts(jn), "files": [str(clip), str(clip2)]})
+    fl, o4, err = resolve_files(jn, two, "")
+    check("join: listed clips used when input is empty", fl == [str(clip)] and o4["files"] == [str(clip2)] and err is None, str((fl, o4, err)))
+    ok_, fail_, outs_ = execute(jn, o4, fl, str(work / "jn"), lambda m_: None, lambda f: None, threading.Event())
+    check("join runs from listed clips", ok_ == 1 and fail_ == 0 and outs_ and os.path.exists(outs_[0]), str((ok_, fail_)))
+    fl, o4, err = resolve_files(jn, convert_opts(jn, {**default_opts(jn), "files": [str(clip2)]}), str(clip))
+    check("join: valid input stays first", fl == [str(clip)] and o4["files"] == [str(clip2)])
     lines = []
     ev = threading.Event()
     prog = []
