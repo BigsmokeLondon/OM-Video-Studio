@@ -11,6 +11,10 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
+**New in 1.4.0:**
+- **Sliders everywhere they make sense.** Trim, Trim audio, Thumbnail, GIF, Freeze frame, Split, Fades, Crop (width, height and position), Silence removal, text start/end times and more now have sliders under the boxes. Time boxes use a **minutes:seconds:milliseconds** counter (e.g. `001:22:400`), with -1s / -.1s / +.1s / +1s nudge buttons for exact cuts. Typing in the box moves the slider, and the other way round.
+- **Live before/after preview for every video and image operation**, not just Trim and Crop. Change an option and the preview frame updates.
+
 **New in 1.3.0:**
 - **Job queue.** Select several files at once (Browse files… or drop them together), then use **Add to queue** in any operation's window. Line up different operations, reorder them in the **Queue** window and run the lot with one click.
 - **Live preview for Trim and Crop.** The window shows the start and end frames of your cut, or the cropped result, and updates as you type.

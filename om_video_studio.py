@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. Video Studio"
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -230,10 +230,13 @@ sys.excepthook = _excepthook
 
 # --------------------------------------------------------------------------- helpers
 def tsec(s):
-    """'1:02:03.5' / '90' / '' -> seconds."""
+    """'1:02:03.5' / '90' / '001:22:400' (min:sec:ms) / '' -> seconds."""
     s = str(s).strip()
     if not s:
         return 0.0
+    parts = s.split(":")
+    if len(parts) == 3 and len(parts[2]) == 3 and parts[2].isdigit() and "." not in s:
+        return int(float(parts[0])) * 60 + float(parts[1]) + int(parts[2]) / 1000.0  # minutes:seconds:milliseconds, e.g. 001:22:400
     t = 0.0
     for p in s.split(":"):
         t = t * 60 + float(p)
@@ -1398,6 +1401,60 @@ def convert_opts(spec, raw):
 
 # --------------------------------------------------------------------------- settings
 # --------------------------------------------------------------------------- copy command / preview / queue (engine)
+def fmt_ms(t):
+    """Seconds -> 'MMM:SS:mmm' (minutes:seconds:milliseconds), the format the time boxes use."""
+    ms = max(0, int(round(float(t) * 1000)))
+    return f"{ms // 60000:03d}:{ms // 1000 % 60:02d}:{ms % 1000:03d}"
+
+
+def eval_expr(txt, env):
+    """Evaluate a simple ffmpeg size expression like 'min(iw,ih)' or '(iw-ow)/2'. Returns a float, or None if it can't."""
+    import ast
+    import operator
+    binops = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv}
+
+    def ev(n):
+        if isinstance(n, ast.Expression):
+            return ev(n.body)
+        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) and not isinstance(n.value, bool):
+            return float(n.value)
+        if isinstance(n, ast.Name) and n.id in env:
+            return float(env[n.id])
+        if isinstance(n, ast.BinOp) and type(n.op) in binops:
+            return binops[type(n.op)](ev(n.left), ev(n.right))
+        if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.USub, ast.UAdd)):
+            v = ev(n.operand)
+            return -v if isinstance(n.op, ast.USub) else v
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in ("min", "max") and not n.keywords and n.args:
+            return (min if n.func.id == "min" else max)(*[ev(a) for a in n.args])
+        raise ValueError("unsupported")
+    try:
+        return ev(ast.parse(str(txt).strip(), mode="eval"))
+    except (ValueError, SyntaxError, ZeroDivisionError, TypeError, RecursionError):
+        return None
+
+
+# Options that get a slider in their window: (operation id, option key) -> (kind, low, high)
+# kinds: pos = a time inside the clip (high = clip length), posend = same but far right means "to the end" (blank),
+#        len = a length in seconds, num = a plain number, cw/ch/cx/cy = crop width/height/x/y in pixels
+SLIDERS = {
+    ("trim", "start"): ("pos", 0, None), ("trim", "end"): ("posend", 0, None),
+    ("atrim", "start"): ("pos", 0, None), ("atrim", "end"): ("posend", 0, None),
+    ("thumb", "t"): ("pos", 0, None),
+    ("gif", "start"): ("pos", 0, None), ("gif", "dur"): ("len", 0.5, 30), ("gif", "fps"): ("num", 1, 30), ("gif", "w"): ("num", 120, 1280),
+    ("freeze", "t"): ("pos", 0, None), ("freeze", "d"): ("len", 0.5, 20),
+    ("split", "seconds"): ("len", 1, None),
+    ("silence", "db"): ("num", -90, -10), ("silence", "secs"): ("len", 0.1, 5),
+    ("fade", "fin"): ("len", 0, 10), ("fade", "fout"): ("len", 0, 10),
+    ("vfade", "fin"): ("len", 0, 10), ("vfade", "fout"): ("len", 0, 10),
+    ("crossfade", "tr"): ("len", 0.1, 5),
+    ("drawtext", "start"): ("pos", 0, None), ("drawtext", "end"): ("posend", 0, None),
+    ("timer", "from"): ("num", 1, 600),
+    ("ramp", "s"): ("len", 0, None), ("ramp", "e"): ("len", 0, None),
+    ("crop", "w"): ("cw", 2, None), ("crop", "h"): ("ch", 2, None), ("crop", "x"): ("cx", 0, None), ("crop", "y"): ("cy", 0, None),
+}
+
+
 def find_op(op_id):
     return next((s for s in OPS if s["id"] == op_id), None)
 
@@ -1431,6 +1488,40 @@ def grab_frame(path, t, out_png, vf="", box=(420, 300)):
     except (OSError, subprocess.SubprocessError):
         return False
     return r.returncode == 0 and os.path.exists(out_png) and os.path.getsize(out_png) > 0
+
+
+_STRIP1 = {"-c:v", "-crf", "-preset", "-pix_fmt", "-profile:v", "-c:a", "-b:a", "-ar", "-ac", "-movflags", "-b:v", "-maxrate",
+           "-bufsize", "-cq", "-rc", "-tune", "-level", "-c", "-codec", "-acodec", "-vcodec", "-b:a:0"}
+
+
+def preview_frame(spec, opts, src, t, out_png):
+    """Render ONE frame of what an operation would do (its real filters, no encoding) to a PNG. True on success."""
+    tmp = tempfile.mkdtemp(prefix="ffprev_")
+    try:
+        c = Ctx(src, tmp, tmp)
+        j = next((x for x in spec["fn"](opts, c) if not x.get("func") and not x.get("raw_out")), None)
+        if not j or "-i" not in j["args"]:
+            return False
+        a, out, i = list(j["args"]), [], 0
+        while i < len(a):
+            if a[i] in _STRIP1 and i + 1 < len(a):
+                i += 2
+                continue
+            if a[i] == "-map" and i + 1 < len(a) and re.search(r"^\[?a|:a", a[i + 1]):
+                i += 2
+                continue
+            out.append(a[i])
+            i += 1
+        if "-ss" not in out:
+            k = out.index("-i")
+            out[k:k] = ["-ss", f"{max(0.0, t):.3f}"]
+        cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error"] + out + ["-an", "-frames:v", "1", out_png]
+        r = subprocess.run(cmd, capture_output=True, timeout=40, cwd=j.get("cwd"), creationflags=NO_WINDOW)
+        return r.returncode == 0 and os.path.exists(out_png) and os.path.getsize(out_png) > 0
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def resolve_files(spec, opts, path, multi=None):
@@ -2050,12 +2141,13 @@ def gui():
         last = settings.get("last", {}).get(spec["id"], {})
         getters = {}
         tkvars = {}
-        trim_dur = 0.0
-        if spec["id"] == "trim" and preview_source():
+        meta = {"dur": 0.0, "w": 0, "h": 0}
+        if any((spec["id"], o_["key"]) in SLIDERS for o_ in spec["opts"]) and preview_source():
             try:
-                trim_dur = float(probe(preview_source())["dur"] or 0)
+                inf = probe(preview_source())
+                meta = {"dur": float(inf["dur"] or 0), "w": int(inf["w"] or 0), "h": int(inf["h"] or 0)}
             except Exception:  # noqa: BLE001
-                trim_dur = 0.0
+                pass
         for s in spec["opts"]:
             ttk.Label(frm, text=s["label"]).grid(row=r, column=0, sticky="w", pady=4, padx=(0, 12))
             t = s["type"]
@@ -2091,9 +2183,13 @@ def gui():
                 ttk.Entry(frm, textvariable=v, width=40).grid(row=r, column=1, columnspan=2, sticky="ew")
                 getters[s["key"]] = v.get
                 tkvars[s["key"]] = v
-                if trim_dur > 0 and spec["id"] == "trim" and s["key"] in ("start", "end"):
-                    r += 1
-                    add_slider(frm, r, v, trim_dur, s["key"] == "end")
+                cfg = SLIDERS.get((spec["id"], s["key"]))
+                if cfg:
+                    try:
+                        if add_slider(frm, r + 1, v, cfg, meta, tkvars, s["type"] == "int"):
+                            r += 1
+                    except Exception as e:  # noqa: BLE001
+                        write_log(f"slider setup failed for {spec['id']}.{s['key']}: {e!r}")
             r += 1
         if not spec["opts"]:
             ttk.Label(frm, text="No options - just press Run.").grid(row=r, column=0, columnspan=3, sticky="w", pady=6)
@@ -2160,7 +2256,7 @@ def gui():
         ttk.Button(bf, text="Run", style=run_style, command=go).pack(side="left")
         top_.bind("<Return>", lambda e: go())
         top_.bind("<Escape>", lambda e: top_.destroy())
-        if spec["id"] in ("trim", "crop"):
+        if spec["id"] in ("trim", "crop") or spec["kind"] in ("video", "image"):
             try:
                 attach_preview(top_, frm, spec, getters, tkvars, r + 1)
             except Exception as e:  # noqa: BLE001
@@ -2348,11 +2444,59 @@ def gui():
         except Exception:  # noqa: BLE001
             return ""
 
-    def add_slider(frm, row, var, dur, is_end):
-        """A slider (0..dur seconds) kept in step with a text variable. For the end box, far right means 'to the end' (blank)."""
-        sc = ttk.Scale(frm, from_=0, to=dur, orient="horizontal")
-        sc.grid(row=row, column=1, columnspan=2, sticky="ew", pady=(0, 2))
+    def add_slider(frm, row, var, cfg, meta, tkvars, is_int=False):
+        """A slider kept in step with a text box. cfg = (kind, low, high); meta = clip duration / size. Returns False if not usable."""
+        kind, lo, hi = cfg
+        dur, W, H = meta["dur"], meta["w"], meta["h"]
+        if kind in ("pos", "posend"):
+            if dur <= 0:
+                return False
+            lo, hi = 0.0, dur
+        elif hi is None:
+            hi = {"cw": W, "cx": W, "ch": H, "cy": H}.get(kind) or dur
+        if kind in ("len", "num") and meta["dur"] > 0 and cfg[2] is not None and kind == "len":
+            hi = min(hi, max(lo + 0.1, dur))
+        if not hi or hi <= lo:
+            return False
+        timey = kind in ("pos", "posend", "len")
+        rowf = ttk.Frame(frm)
+        rowf.grid(row=row, column=1, columnspan=2, sticky="ew", pady=(0, 2))
+        sc = ttk.Scale(rowf, from_=lo, to=hi, orient="horizontal")
+        read = ttk.Label(rowf, text="", style="Muted.TLabel", width=11, anchor="e")
         lock = {"on": False}
+
+        def env():
+            e = {"iw": W, "ih": H, "in_w": W, "in_h": H}
+            for k, nm in (("w", "ow"), ("h", "oh")):
+                if k in tkvars:
+                    v_ = eval_expr(tkvars[k].get(), e)
+                    if v_ is not None:
+                        e[nm] = v_
+            return e
+
+        def value_of_text():
+            txt = str(var.get()).strip()
+            if kind in ("pos", "posend"):
+                if not txt:
+                    return hi if kind == "posend" else 0.0
+                return tsec(txt)
+            if kind in ("cw", "ch", "cx", "cy"):
+                return eval_expr(txt, env())
+            return float(txt)
+
+        def text_of_value(t):
+            if kind == "posend" and t >= hi - 0.05:
+                return ""
+            if kind in ("pos", "posend"):
+                return fmt_ms(t)
+            if kind in ("cw", "ch", "cx", "cy"):
+                return str(max(0, int(round(t / 2.0)) * 2))
+            if is_int:
+                return str(int(round(t)))
+            return f"{t:.3f}".rstrip("0").rstrip(".") if lo < 1 or hi < 100 else f"{t:.1f}".rstrip("0").rstrip(".")
+
+        def set_read(t):
+            read.configure(text=(fmt_ms(t) if kind == "len" else (f"/ {fmt_ms(dur)}" if kind in ("pos", "posend") else "")))
 
         def from_scale(val):
             if lock["on"]:
@@ -2360,7 +2504,8 @@ def gui():
             t = float(val)
             lock["on"] = True
             try:
-                var.set("" if (is_end and t >= dur - 0.05) else f"{t:.1f}".rstrip("0").rstrip("."))
+                var.set(text_of_value(t))
+                set_read(t)
             finally:
                 lock["on"] = False
 
@@ -2368,17 +2513,51 @@ def gui():
             if lock["on"]:
                 return
             try:
-                t = tsec(var.get()) if str(var.get()).strip() else (dur if is_end else 0.0)
+                t = value_of_text()
             except ValueError:
+                return
+            if t is None:
                 return
             lock["on"] = True
             try:
-                sc.set(min(max(t, 0.0), dur))
+                sc.set(min(max(t, lo), hi))
+                set_read(t)
             finally:
                 lock["on"] = False
+
+        def nudge(d):
+            try:
+                t = value_of_text()
+            except ValueError:
+                return
+            if t is None:
+                return
+            t = min(max(t + d, lo), hi)
+            lock["on"] = True
+            try:
+                var.set(text_of_value(t))
+                sc.set(t)
+                set_read(t)
+            finally:
+                lock["on"] = False
+            var.set(var.get())  # one write so the live preview refreshes
         sc.configure(command=from_scale)
+        if timey:
+            for text, d in (("-1s", -1.0), ("-.1s", -0.1), ("+.1s", 0.1), ("+1s", 1.0)):
+                ttk.Button(rowf, text=text, width=4, command=lambda d=d: nudge(d)).pack(side="right", padx=1)
+        read.pack(side="right", padx=(6, 0))
+        sc.pack(side="left", fill="x", expand=True)
         var.trace_add("write", from_var)
+        if kind in ("pos", "posend") and str(var.get()).strip():
+            try:
+                lock["on"] = True
+                var.set(fmt_ms(tsec(var.get())))
+            except ValueError:
+                pass
+            finally:
+                lock["on"] = False
         from_var()
+        return True
 
     def attach_preview(top_, frm, spec, getters, tkvars, nrows):
         src = preview_source()
@@ -2386,7 +2565,7 @@ def gui():
             return
         box = ttk.LabelFrame(frm, text="Live preview", padding=8)
         box.grid(row=0, column=3, rowspan=max(nrows, 4), sticky="n", padx=(18, 0))
-        names = ["Start frame", "End frame"] if spec["id"] == "trim" else ["Result of the crop"]
+        names = ["Start frame", "End frame"] if spec["id"] == "trim" else (["Result of the crop"] if spec["id"] == "crop" else ["Before", "After (this is what the result will look like)"])
         labels = []
         for nm in names:
             ttk.Label(box, text=nm, style="Muted.TLabel").pack(anchor="w")
@@ -2414,6 +2593,19 @@ def gui():
                         for i, t in enumerate((s_, max(s_, e_ - 0.1))):
                             f = os.path.join(tmpd, f"t{n}_{i}.png")
                             paths.append(f if grab_frame(src, t, f) else None)
+                elif spec["id"] != "crop":
+                    t0 = dur / 3 if dur else 0
+                    f0, f1 = os.path.join(tmpd, f"b{n}.png"), os.path.join(tmpd, f"a{n}.png")
+                    paths.append(f0 if grab_frame(src, t0, f0) else None)
+                    try:
+                        o2 = convert_opts(spec, raw)
+                    except ValueError:
+                        o2 = None
+                        msg = "Fill in the options to see the preview."
+                    if o2 is not None:
+                        ok2 = preview_frame(spec, o2, src, t0, f1)
+                        paths.append(f1 if ok2 else None)
+                        msg = "" if ok2 else "No preview for these settings (or this kind of operation) - Run will still work."
                 else:
                     o = {k: (str(raw[k]).strip() or next(x for x in spec["opts"] if x["key"] == k)["default"]) for k in ("w", "h", "x", "y")}
                     f = os.path.join(tmpd, f"c{n}.png")
@@ -2431,6 +2623,10 @@ def gui():
             for lab, pth in zip(labels, paths + [None] * len(labels)):
                 try:
                     img = tk.PhotoImage(file=pth) if pth else None
+                    if img is not None:
+                        k = max(1, -(-img.width() // 420), -(-img.height() // 300))
+                        if k > 1:
+                            img = img.subsample(k, k)
                 except tk.TclError:
                     img = None
                 if img:
@@ -2575,6 +2771,23 @@ def selftest_extras():
     for c_, sz in ((clip, "640x360"), (clip2, "320x240")):
         subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc=duration=4:size={sz}:rate=25", "-f", "lavfi",
                         "-i", "sine=duration=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(c_)], check=True)
+    check("fmt_ms", fmt_ms(82.4) == "001:22:400" and fmt_ms(0) == "000:00:000" and fmt_ms(3599.9996) == "060:00:000", fmt_ms(82.4))
+    check("tsec min:sec:ms", abs(tsec("001:22:400") - 82.4) < 1e-9 and tsec("1:02:03") == 3723 and tsec("90") == 90 and tsec("1:02:03.5") == 3723.5 and tsec("") == 0)
+    check("tsec round trip", all(abs(tsec(fmt_ms(x)) - x) < 0.0006 for x in (0, 0.5, 44, 81.4, 241.2, 3600.123)))
+    env_ = {"iw": 640, "ih": 360, "ow": 360, "oh": 360}
+    check("eval_expr", eval_expr("min(iw,ih)", env_) == 360 and eval_expr("(iw-ow)/2", env_) == 140 and eval_expr("ih/2", env_) == 180
+          and eval_expr("640", env_) == 640 and eval_expr("__import__('os')", env_) is None and eval_expr("iw/0", env_) is None and eval_expr("abc", env_) is None)
+    bad = []
+    for (oid, key), (kind, lo_, hi_) in SLIDERS.items():
+        sp = find_op(oid)
+        o_ = next((x for x in sp["opts"] if x["key"] == key), None) if sp else None
+        if o_ is None:
+            bad.append(f"{oid}.{key} missing")
+        elif kind in ("pos", "posend") and o_["type"] != "text":
+            bad.append(f"{oid}.{key} time slider on a {o_['type']} box")
+        elif kind not in ("pos", "posend") and o_["type"] not in ("int", "float", "text"):
+            bad.append(f"{oid}.{key} bad type")
+    check("SLIDERS match real options", not bad, str(bad))
     trim, crop = find_op("trim"), find_op("crop")
     check("find_op", trim is not None and crop is not None and find_op("nope") is None)
     topts = convert_opts(trim, {**default_opts(trim), "start": "1", "end": "3"})
@@ -2597,6 +2810,11 @@ def selftest_extras():
     join = find_op("join")
     fl, o2, err = resolve_files(join, {"files": []}, "", [str(clip), str(clip2)])
     check("resolve folder_one with multi", fl == [str(clip)] and o2["files"] == [str(clip2)], str((fl, o2)))
+    for oid in ("resize", "rotate", "social", "blur"):
+        sp_ = find_op(oid)
+        pf = work / f"pv_{oid}.png"
+        check("preview_frame " + oid, preview_frame(sp_, convert_opts(sp_, default_opts(sp_)), str(clip), 1.0, str(pf)))
+    check("preview_frame fails cleanly when it can't", not preview_frame(find_op("join"), {"files": []}, str(clip), 1.0, str(work / "pv_join.png")))
     lines = []
     ev = threading.Event()
     prog = []
