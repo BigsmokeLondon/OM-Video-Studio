@@ -1,7 +1,17 @@
 # O.M. Video Studio
 
+![O.M. Video Studio demo](docs/images/demo.gif)
+
 Point-and-click video, audio and image tools for Windows, powered by ffmpeg. Pick a file, press a button.
 Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, thumbnails and more (70 operations).
+
+## Screenshots
+
+| Pick a tool | One-click social export | Finished |
+|---|---|---|
+| [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
+
+**New in 1.2.0:** *Export for social media* under Format & Quality. Pick TikTok, Instagram Reels, YouTube Shorts, YouTube, X or Instagram feed, and the app resizes, re-encodes (H.264 + AAC, fast-start MP4) and fills any spare space with a blurred background, black bars or a crop.
 
 ## Install (Windows 10/11)
 
