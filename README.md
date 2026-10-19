@@ -2,8 +2,7 @@
 
 ![O.M. Video Studio demo](docs/images/demo.gif)
 
-Point-and-click video, audio and image tools for Windows, powered by ffmpeg. Pick a file, press a button.
-Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, thumbnails and more (70 operations).
+Free point-and-click video, audio and image tools for Windows, powered by ffmpeg. 70 one-click operations, no commands to learn.
 
 ## Screenshots
 
