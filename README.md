@@ -12,6 +12,9 @@ Free point-and-click video, audio and image tools for Windows, powered by ffmpeg
 
 **New in 1.2.0:** *Export for social media* under Format & Quality. Pick TikTok, Instagram Reels, YouTube Shorts, YouTube, X or Instagram feed, and the app resizes, re-encodes (H.264 + AAC, fast-start MP4) and fills any spare space with a blurred background, black bars or a crop.
 
+## Website: 
+https://github.com/BigsmokeLondon/OM-Video-Studio/releases/latest
+
 ## Install (Windows 10/11)
 
 1. Go to **[Releases](../../releases/latest)** and download **`OM-Video-Studio-Setup.exe`**.
