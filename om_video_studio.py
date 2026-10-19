@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. Video Studio"
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -979,7 +979,7 @@ def b_crossfade(o, c):
      O("fx", "Effect", "choice", "Slow zoom in", ["Slow zoom in", "Slow zoom out", "None (still)"]),
      O("size", "Video size", "choice", "1920x1080 landscape", ["1920x1080 landscape", "1080x1920 vertical", "1080x1080 square"]),
      O("tr", "Crossfade between photos (seconds, 0 = cut)", "float", 0.5), O("music", "Music (optional)", "file", ftype="audio")],
-    kind="image", tip="Pick a folder with 'Batch folder' to use every photo in it, in name order.", folder_one=True)
+    kind="image", tip="Choose your photos with 'Add…' or 'Add folder…' below (the Input box can stay empty), or pick a folder with 'Batch folder'. Photos are used in name order.", folder_one=True)
 def b_slideshow(o, c):
     imgs = [c.src] + list(o["files"])
     n = len(imgs)
@@ -1527,6 +1527,11 @@ def preview_frame(spec, opts, src, t, out_png):
 def resolve_files(spec, opts, path, multi=None):
     """Work out which files an operation runs on. Returns (files, opts, error_message_or_None)."""
     needs_extra = any(s["type"] in ("file", "files") for s in spec["opts"])
+    extras = list(opts.get("files", [])) if spec.get("folder_one") else []
+    if (spec.get("folder_one") and spec["kind"] == "image" and extras and not multi
+            and (not path or not os.path.exists(path) or (os.path.isfile(path) and Path(path).suffix.lower() not in IMAGE_EXT))):
+        # photos were added in the window and the input box holds something else (or nothing): use the photos
+        return [extras[0]], {**opts, "files": extras[1:]}, None
     if multi:
         files = [f for f in multi if os.path.isfile(f)]
         if not files:
@@ -1544,7 +1549,7 @@ def resolve_files(spec, opts, path, multi=None):
         return [], opts, "This operation needs extra files, so it can't run on several files at once. Pick a single file."
     if spec.get("folder_one"):
         opts = dict(opts)
-        opts["files"] = list(opts.get("files", [])) + files[1:] if multi else files[1:]
+        opts["files"] = files[1:] + extras
         files = files[:1]
     return files, opts, None
 
@@ -2175,8 +2180,18 @@ def gui():
                 lb.grid(row=r, column=1, sticky="ew")
                 bf = ttk.Frame(frm)
                 bf.grid(row=r, column=2, padx=4)
-                ttk.Button(bf, text="Add…", command=lambda lb=lb: [lb.insert("end", p) for p in filedialog.askopenfilenames(filetypes=ft_for("media"))]).pack(fill="x")
-                ttk.Button(bf, text="Remove", command=lambda lb=lb: [lb.delete(i) for i in reversed(lb.curselection())]).pack(fill="x", pady=2)
+                ttk.Button(bf, text="Add…", command=lambda lb=lb, kind=spec["kind"]: [lb.insert("end", os.path.normpath(p)) for p in filedialog.askopenfilenames(filetypes=ft_for("image" if kind == "image" else "media"))] + [top_.event_generate("<<FilesChanged>>")]).pack(fill="x")
+
+                def add_folder(lb=lb, kind=spec["kind"]):
+                    d = filedialog.askdirectory(title="Add every file in a folder", initialdir=settings.get("lastdir") or None)
+                    if d:
+                        ex = kind_exts(kind)
+                        for f in sorted(Path(d).iterdir()):
+                            if f.is_file() and f.suffix.lower() in ex:
+                                lb.insert("end", os.path.normpath(str(f)))
+                        top_.event_generate("<<FilesChanged>>")
+                ttk.Button(bf, text="Add folder…", command=add_folder).pack(fill="x", pady=(2, 0))
+                ttk.Button(bf, text="Remove", command=lambda lb=lb: [lb.delete(i) for i in reversed(lb.curselection())] + [top_.event_generate("<<FilesChanged>>")]).pack(fill="x", pady=2)
                 getters[s["key"]] = lambda lb=lb: list(lb.get(0, "end"))
             else:
                 v = tk.StringVar(value=str(dflt))
@@ -2560,8 +2575,14 @@ def gui():
         return True
 
     def attach_preview(top_, frm, spec, getters, tkvars, nrows):
-        src = preview_source()
-        if not src:
+        def cur_src(raw=None):
+            src_ = preview_source()
+            if spec["kind"] == "image" and (not src_ or Path(src_).suffix.lower() not in IMAGE_EXT):
+                fl = (raw or {}).get("files") or []
+                src_ = fl[0] if fl and os.path.isfile(fl[0]) else ""
+            return src_
+        src = cur_src({"files": getters["files"]()} if "files" in getters else None)
+        if not src and spec["kind"] != "image":
             return
         box = ttk.LabelFrame(frm, text="Live preview", padding=8)
         box.grid(row=0, column=3, rowspan=max(nrows, 4), sticky="n", padx=(18, 0))
@@ -2579,7 +2600,10 @@ def gui():
 
         def work(n, raw):
             paths, msg = [], ""
+            src = cur_src(raw)
             try:
+                if not src:
+                    raise ValueError("Add some photos to see a preview.")
                 dur = probe(src)["dur"] or 0
                 if spec["id"] == "trim":
                     s_ = tsec(raw["start"] or "0")
@@ -2662,6 +2686,7 @@ def gui():
         for v in tkvars.values():
             v.trace_add("write", later)
         top_.bind("<Destroy>", cleanup, add="+")
+        top_.bind("<<FilesChanged>>", later, add="+")
         kick()
 
     # ------------------------------------------------------------------ finish up
@@ -2815,6 +2840,26 @@ def selftest_extras():
         pf = work / f"pv_{oid}.png"
         check("preview_frame " + oid, preview_frame(sp_, convert_opts(sp_, default_opts(sp_)), str(clip), 1.0, str(pf)))
     check("preview_frame fails cleanly when it can't", not preview_frame(find_op("join"), {"files": []}, str(clip), 1.0, str(work / "pv_join.png")))
+    ss = find_op("slideshow")
+    photos = []
+    for i_ in range(3):
+        pp = work / f"photo{i_}.png"
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc=size=400x300:rate=1,hue=h={i_ * 60}", "-frames:v", "1", str(pp)], check=True)
+        photos.append(str(pp))
+    sopts = convert_opts(ss, {**default_opts(ss), "secs": "1", "tr": "0.3", "files": photos})
+    fl, o3, err = resolve_files(ss, sopts, str(clip))  # input box holds a VIDEO, photos listed in the window
+    check("slideshow: listed photos used when input is a video", fl == [photos[0]] and o3["files"] == photos[1:] and err is None, str((fl, err)))
+    fl, o3, err = resolve_files(ss, sopts, "")
+    check("slideshow: listed photos used when input is empty", fl == [photos[0]] and err is None)
+    photo_dir = work / "photos"
+    photo_dir.mkdir()
+    for pp in photos:
+        shutil.copy(pp, photo_dir)
+    fl, o3, err = resolve_files(ss, convert_opts(ss, {**default_opts(ss), "files": [photos[0]]}), str(photo_dir))
+    check("slideshow: folder + extra photos", len(fl) == 1 and len(o3["files"]) == 3 and err is None, str((fl, o3)))
+    fl, o3, err = resolve_files(ss, sopts, "")
+    ok_, fail_, outs_ = execute(ss, o3, fl, str(work / "ss"), lines_.append if False else (lambda m_: None), lambda f: None, threading.Event())
+    check("slideshow runs from listed photos", ok_ == 1 and fail_ == 0 and outs_ and os.path.exists(outs_[0]), str((ok_, fail_, outs_)))
     lines = []
     ev = threading.Event()
     prog = []
