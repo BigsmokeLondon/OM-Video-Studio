@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. Video Studio"
-VERSION = "1.4.2"
+VERSION = "1.5.0"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -438,10 +438,30 @@ def b_reverse(o, c):
     return [job(a + vcodec() + AAC, c.out("_reversed", ".mp4"), c.dur)]
 
 
+RES = {"144p": 144, "240p": 240, "320p": 320, "360p": 360, "480p": 480, "540p": 540, "720p (HD)": 720, "1080p (Full HD)": 1080,
+       "1440p (2K)": 1440, "2160p (4K)": 2160, "4320p (8K)": 4320}
+RES_CUSTOM = "Custom (use the width / height boxes)"
+
+
 @op("Video", "resize", "Resize",
-    [O("width", "Width (-2 = auto)", default="1280"), O("height", "Height (-2 = auto)", default="-2")])
+    [O("preset", "Size", "choice", "720p (HD)", list(RES) + [RES_CUSTOM]),
+     O("noup", "Never enlarge (keep the original if it is already smaller)", "bool", True),
+     O("width", "Custom width (-2 = auto)", default="1280"), O("height", "Custom height (-2 = auto)", default="-2")],
+    tip="Pick a size from the list (from 144p up to 8K). The number is the short side, so it also works for vertical videos. "
+        "For an exact size choose Custom and use the boxes.")
 def b_resize(o, c):
-    return [job(["-i", c.src, "-vf", f"scale={o['width']}:{o['height']}"] + vcodec() + AAC, c.out(f"_{o['width']}w", ".mp4"), c.dur)]
+    if o["preset"] == RES_CUSTOM:
+        return [job(["-i", c.src, "-vf", f"scale={o['width']}:{o['height']}"] + vcodec() + AAC, c.out(f"_{o['width']}w", ".mp4"), c.dur)]
+    n = RES[o["preset"]]
+    tag = "_" + o["preset"].split(" ")[0]
+    short = min(c.w, c.h) if c.w and c.h else 0
+    if o["noup"] and short and n >= short:
+        vf, tag = "scale=trunc(iw/2)*2:trunc(ih/2)*2", "_orig"
+    elif c.h > c.w > 0:
+        vf = f"scale={n}:-2"
+    else:
+        vf = f"scale=-2:{n}"
+    return [job(["-i", c.src, "-vf", vf] + vcodec() + AAC, c.out(tag, ".mp4"), c.dur)]
 
 
 def crop_filter(o):
@@ -1451,6 +1471,7 @@ SLIDERS = {
     ("drawtext", "start"): ("pos", 0, None), ("drawtext", "end"): ("posend", 0, None),
     ("timer", "from"): ("num", 1, 600),
     ("ramp", "s"): ("len", 0, None), ("ramp", "e"): ("len", 0, None),
+    ("resize", "width"): ("inum", 160, 3840), ("resize", "height"): ("inum", 120, 2160),
     ("crop", "w"): ("cw", 2, None), ("crop", "h"): ("ch", 2, None), ("crop", "x"): ("cx", 0, None), ("crop", "y"): ("cy", 0, None),
 }
 
@@ -1492,6 +1513,18 @@ def grab_frame(path, t, out_png, vf="", box=(420, 300)):
 
 _STRIP1 = {"-c:v", "-crf", "-preset", "-pix_fmt", "-profile:v", "-c:a", "-b:a", "-ar", "-ac", "-movflags", "-b:v", "-maxrate",
            "-bufsize", "-cq", "-rc", "-tune", "-level", "-c", "-codec", "-acodec", "-vcodec", "-b:a:0"}
+
+
+def png_size(path):
+    """(width, height) of a PNG file, or (0, 0)."""
+    try:
+        with open(path, "rb") as f:
+            h = f.read(24)
+        if h[:8] == b"\x89PNG\r\n\x1a\n":
+            return int.from_bytes(h[16:20], "big"), int.from_bytes(h[20:24], "big")
+    except OSError:
+        pass
+    return 0, 0
 
 
 def preview_frame(spec, opts, src, t, out_png):
@@ -2462,6 +2495,8 @@ def gui():
     def add_slider(frm, row, var, cfg, meta, tkvars, is_int=False):
         """A slider kept in step with a text box. cfg = (kind, low, high); meta = clip duration / size. Returns False if not usable."""
         kind, lo, hi = cfg
+        if kind == "inum":
+            kind, is_int = "num", True
         dur, W, H = meta["dur"], meta["w"], meta["h"]
         if kind in ("pos", "posend"):
             if dur <= 0:
@@ -2582,8 +2617,6 @@ def gui():
                 src_ = fl[0] if fl and os.path.isfile(fl[0]) else ""
             return src_
         src = cur_src({"files": getters["files"]()} if "files" in getters else None)
-        if not src and spec["kind"] != "image":
-            return
         box = ttk.LabelFrame(frm, text="Live preview", padding=8)
         box.grid(row=0, column=3, rowspan=max(nrows, 4), sticky="n", padx=(18, 0))
         names = ["Start frame", "End frame"] if spec["id"] == "trim" else (["Result of the crop"] if spec["id"] == "crop" else ["Before", "After (this is what the result will look like)"])
@@ -2597,13 +2630,14 @@ def gui():
         note.pack(anchor="w")
         tmpd = tempfile.mkdtemp(prefix="ffprev_")
         st = {"n": 0, "after": None, "imgs": []}
+        pair = spec["id"] not in ("trim", "crop")
 
         def work(n, raw):
             paths, msg = [], ""
             src = cur_src(raw)
             try:
                 if not src:
-                    raise ValueError("Add some photos to see a preview.")
+                    raise ValueError("Add some photos to see a preview." if spec["kind"] == "image" else "Choose a file in the Input box first.")
                 dur = probe(src)["dur"] or 0
                 if spec["id"] == "trim":
                     s_ = tsec(raw["start"] or "0")
@@ -2620,7 +2654,7 @@ def gui():
                 elif spec["id"] != "crop":
                     t0 = dur / 3 if dur else 0
                     f0, f1 = os.path.join(tmpd, f"b{n}.png"), os.path.join(tmpd, f"a{n}.png")
-                    paths.append(f0 if grab_frame(src, t0, f0) else None)
+                    paths.append(f0 if grab_frame(src, t0, f0, box=(99999, 99999)) else None)
                     try:
                         o2 = convert_opts(spec, raw)
                     except ValueError:
@@ -2629,7 +2663,12 @@ def gui():
                     if o2 is not None:
                         ok2 = preview_frame(spec, o2, src, t0, f1)
                         paths.append(f1 if ok2 else None)
-                        msg = "" if ok2 else "No preview for these settings (or this kind of operation) - Run will still work."
+                        if ok2:
+                            w1, h1 = png_size(f1)
+                            w0, h0 = png_size(f0)
+                            msg = f"Size: {w0}x{h0}  ->  {w1}x{h1}" if (w0 and w1) else ""
+                        else:
+                            msg = "No preview for these settings (or this kind of operation) - Run will still work."
                 else:
                     o = {k: (str(raw[k]).strip() or next(x for x in spec["opts"] if x["key"] == k)["default"]) for k in ("w", "h", "x", "y")}
                     f = os.path.join(tmpd, f"c{n}.png")
@@ -2644,15 +2683,20 @@ def gui():
             if n != st["n"] or not top_.winfo_exists():
                 return
             st["imgs"] = []
-            for lab, pth in zip(labels, paths + [None] * len(labels)):
+            loaded = []
+            for pth in paths + [None] * (len(labels) - len(paths)):
                 try:
-                    img = tk.PhotoImage(file=pth) if pth else None
-                    if img is not None:
-                        k = max(1, -(-img.width() // 420), -(-img.height() // 300))
-                        if k > 1:
-                            img = img.subsample(k, k)
+                    loaded.append(tk.PhotoImage(file=pth) if pth else None)
                 except tk.TclError:
-                    img = None
+                    loaded.append(None)
+            if pair:  # same shrink factor for both so a smaller result really looks smaller
+                kk = max([1] + [max(-(-i_.width() // 420), -(-i_.height() // 300)) for i_ in loaded if i_ is not None])
+                ks = [kk] * len(loaded)
+            else:
+                ks = [max(1, -(-i_.width() // 420), -(-i_.height() // 300)) if i_ is not None else 1 for i_ in loaded]
+            for lab, img, k in zip(labels, loaded, ks):
+                if img is not None and k > 1:
+                    img = img.subsample(k, k)
                 if img:
                     st["imgs"].append(img)
                     lab.configure(image=img, text="")
@@ -2868,6 +2912,22 @@ def selftest_extras():
     check("join runs from listed clips", ok_ == 1 and fail_ == 0 and outs_ and os.path.exists(outs_[0]), str((ok_, fail_)))
     fl, o4, err = resolve_files(jn, convert_opts(jn, {**default_opts(jn), "files": [str(clip2)]}), str(clip))
     check("join: valid input stays first", fl == [str(clip)] and o4["files"] == [str(clip2)])
+    rz = find_op("resize")
+    port = work / "portrait.mp4"
+    subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=360x640:rate=25", "-pix_fmt", "yuv420p", str(port)], check=True)
+
+    def rz_size(src_, **kw):
+        o_ = convert_opts(rz, {**default_opts(rz), **kw})
+        r_ = execute(rz, o_, [str(src_)], str(work / "rz"), lambda m_: None, lambda f: None, threading.Event())
+        return (probe(r_[2][0])["w"], probe(r_[2][0])["h"]) if r_[0] == 1 else None
+    check("resize 240p landscape", rz_size(clip, preset="240p") == (426, 240), str(rz_size(clip, preset="240p")))
+    check("resize 720p never enlarges", rz_size(clip, preset="720p (HD)") == (640, 360), str(rz_size(clip, preset="720p (HD)")))
+    check("resize 720p enlarge allowed", rz_size(clip, preset="720p (HD)", noup=False) == (1280, 720))
+    check("resize 320p portrait uses short side", rz_size(port, preset="320p") == (320, 568), str(rz_size(port, preset="320p")))
+    check("resize custom boxes", rz_size(clip, preset=RES_CUSTOM, width="200", height="-2") == (200, 112))
+    check("resize presets cover 320p..8K", "320p" in RES and "4320p (8K)" in RES and RES["2160p (4K)"] == 2160)
+    pw, ph = png_size(str(f1))
+    check("png_size", pw > 0 and ph > 0, str((pw, ph)))
     lines = []
     ev = threading.Event()
     prog = []
