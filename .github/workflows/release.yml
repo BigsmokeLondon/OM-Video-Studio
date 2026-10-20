@@ -109,9 +109,22 @@ jobs:
         timeout-minutes: 8
         run: |
           mkdir -p Output
-          # faulthandler prints where Python is stuck and exits if the test runs longer than 4 minutes
-          python -u -c "import faulthandler,runpy,sys; faulthandler.dump_traceback_later(240, exit=True); sys.argv=['om_video_studio.py','--selftest','trim,split,convert,compress,extract,thumb,extras']; runpy.run_path('om_video_studio.py', run_name='__main__')" 2>&1 | tee Output/selftest-${{ matrix.arch }}.txt
-          test ${PIPESTATUS[0]} -eq 0
+          # faulthandler prints where Python is stuck and exits if the test runs longer than 3 minutes.
+          # Output goes to a file (not a pipe) so an orphaned child process cannot keep this step waiting.
+          python -u -c "import faulthandler,runpy,sys; faulthandler.dump_traceback_later(180, exit=True); sys.argv=['om_video_studio.py','--selftest','trim,split,convert,compress,extract,thumb,extras']; runpy.run_path('om_video_studio.py', run_name='__main__')" > Output/selftest-${{ matrix.arch }}.txt 2>&1 < /dev/null
+          RC=$?
+          ps aux | grep -iE 'ffmpeg|ffprobe|afplay|python' | grep -v grep > Output/processes-${{ matrix.arch }}.txt || true
+          pkill -f ffmpeg || true
+          cat Output/selftest-${{ matrix.arch }}.txt
+          exit $RC
+
+      - name: Publish diagnostics to a ci-logs branch
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p diag && cp Output/*.txt Output/*.png diag/ 2>/dev/null || true
+          cd diag && git init -q && git remote add o "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}"
+          git add -A && git -c user.name=ci -c user.email=ci@example.com commit -qm "diagnostics ${{ matrix.arch }}" && git push -qf o HEAD:refs/heads/ci-logs-${{ matrix.arch }}
 
       - name: Make the macOS icon from app.ico
         run: |
