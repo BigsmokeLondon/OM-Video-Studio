@@ -283,6 +283,7 @@ TR = {
         'X offset': 'X آفسیٹ',
         'Y offset': 'Y آفسیٹ',
         '…or background colour': '…یا پس منظر کا رنگ',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'براہ کرم پہلے ان پٹ فائل یا فولڈر منتخب کریں۔\n\nفائلیں براؤز کریں...، بیچ فولڈر...، استعمال کریں یا فائل کو اس ونڈو پر گھسیٹیں۔',
     },
     "bn": {
         '☾  Dark mode': '☾  ডার্ক মোড',
@@ -550,6 +551,7 @@ TR = {
         'X offset': 'X অফসেট',
         'Y offset': 'Y অফসেট',
         '…or background colour': '…অথবা ব্যাকগ্রাউন্ড রং',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'অনুগ্রহ করে আগে একটি ইনপুট ফাইল বা ফোল্ডার বেছে নিন।\n\nফাইল ব্রাউজ করুন..., ব্যাচ ফোল্ডার... ব্যবহার করুন, অথবা এই উইন্ডোতে ফাইল টেনে আনুন।',
     },
     "ne": {
         '☾  Dark mode': '☾  ड्यार्क मोड',
@@ -817,6 +819,7 @@ TR = {
         'X offset': 'X अफसेट',
         'Y offset': 'Y अफसेट',
         '…or background colour': '…वा पृष्ठभूमि रङ',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'कृपया पहिले इनपुट फाइल वा फोल्डर छान्नुहोस्।\n\nफाइल ब्राउज गर्नुहोस्..., ब्याच फोल्डर... प्रयोग गर्नुहोस्, वा फाइल यो विन्डोमा तान्नुहोस्।',
     },
     "ar": {
         '☾  Dark mode': '☾  الوضع الداكن',
@@ -1084,6 +1087,7 @@ TR = {
         'X offset': 'إزاحة X',
         'Y offset': 'إزاحة Y',
         '…or background colour': '…أو لون الخلفية',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'يُرجى اختيار ملف أو مجلد الإدخال أولاً.\n\nاستخدم تصفّح الملفات...، أو مجلد الدفعة...، أو اسحب ملفاً إلى هذه النافذة.',
     },
     "ru": {
         '☾  Dark mode': '☾  Тёмная тема',
@@ -1351,6 +1355,7 @@ TR = {
         'X offset': 'Смещение по X',
         'Y offset': 'Смещение по Y',
         '…or background colour': '…или цвет фона',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Сначала выберите входной файл или папку.\n\nИспользуйте «Выбрать файлы...», «Папка для пакета...» или перетащите файл в это окно.',
     },
     "hi": {
         '☾  Dark mode': '☾  डार्क मोड',
@@ -1618,6 +1623,7 @@ TR = {
         'X offset': 'X ऑफ़सेट',
         'Y offset': 'Y ऑफ़सेट',
         '…or background colour': '…या बैकग्राउंड का रंग',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'कृपया पहले इनपुट फ़ाइल या फ़ोल्डर चुनें।\n\nफ़ाइलें ब्राउज़ करें..., बैच फ़ोल्डर... का उपयोग करें, या फ़ाइल को इस विंडो पर खींचकर छोड़ें।',
     },
     "pa": {
         '☾  Dark mode': '☾  ਡਾਰਕ ਮੋਡ',
@@ -1885,6 +1891,7 @@ TR = {
         'X offset': 'X ਆਫ਼ਸੈੱਟ',
         'Y offset': 'Y ਆਫ਼ਸੈੱਟ',
         '…or background colour': '…ਜਾਂ ਪਿਛੋਕੜ ਦਾ ਰੰਗ',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'ਕਿਰਪਾ ਕਰਕੇ ਪਹਿਲਾਂ ਇਨਪੁੱਟ ਫ਼ਾਈਲ ਜਾਂ ਫ਼ੋਲਡਰ ਚੁਣੋ।\n\nਫ਼ਾਈਲਾਂ ਬ੍ਰਾਊਜ਼ ਕਰੋ..., ਬੈਚ ਫ਼ੋਲਡਰ... ਵਰਤੋ, ਜਾਂ ਫ਼ਾਈਲ ਨੂੰ ਇਸ ਵਿੰਡੋ ਉੱਤੇ ਖਿੱਚ ਕੇ ਛੱਡੋ।',
     },
     "es": {
         '☾  Dark mode': '☾  Modo oscuro',
@@ -2152,6 +2159,7 @@ TR = {
         'X offset': 'Desplazamiento X',
         'Y offset': 'Desplazamiento Y',
         '…or background colour': '…o color de fondo',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Primero selecciona un archivo o una carpeta de entrada.\n\nUsa Examinar archivos..., Carpeta por lotes... o arrastra un archivo a esta ventana.',
     },
     "fr": {
         '☾  Dark mode': '☾  Mode sombre',
@@ -2419,6 +2427,7 @@ TR = {
         'X offset': 'Décalage X',
         'Y offset': 'Décalage Y',
         '…or background colour': "…ou couleur d'arrière-plan",
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': "Veuillez d'abord choisir un fichier ou un dossier d'entrée.\n\nUtilisez Parcourir les fichiers..., Dossier en lot... ou faites glisser un fichier sur cette fenêtre.",
     },
     "de": {
         '☾  Dark mode': '☾  Dunkelmodus',
@@ -2686,6 +2695,7 @@ TR = {
         'X offset': 'X-Versatz',
         'Y offset': 'Y-Versatz',
         '…or background colour': '…oder Hintergrundfarbe',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Bitte wähle zuerst eine Eingabedatei oder einen Ordner aus.\n\nNutze Dateien durchsuchen..., Stapelordner... oder ziehe eine Datei auf dieses Fenster.',
     },
     "pt": {
         '☾  Dark mode': '☾  Modo escuro',
@@ -2953,6 +2963,7 @@ TR = {
         'X offset': 'Deslocamento X',
         'Y offset': 'Deslocamento Y',
         '…or background colour': '…ou cor de fundo',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Selecione primeiro um ficheiro ou uma pasta de entrada.\n\nUse Procurar ficheiros..., Pasta em lote... ou arraste um ficheiro para esta janela.',
     },
     "it": {
         '☾  Dark mode': '☾  Modalità scura',
@@ -3220,6 +3231,7 @@ TR = {
         'X offset': 'Scostamento X',
         'Y offset': 'Scostamento Y',
         '…or background colour': '…o colore di sfondo',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Seleziona prima un file o una cartella di ingresso.\n\nUsa Sfoglia file..., Cartella batch... oppure trascina un file in questa finestra.',
     },
     "tr": {
         '☾  Dark mode': '☾  Koyu mod',
@@ -3487,5 +3499,6 @@ TR = {
         'X offset': 'X kayması',
         'Y offset': 'Y kayması',
         '…or background colour': '…veya arka plan rengi',
+        'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Lütfen önce bir girdi dosyası veya klasörü seçin.\n\nDosyalara göz at..., Toplu klasör... kullanın veya bir dosyayı bu pencereye sürükleyin.',
     },
 }

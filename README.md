@@ -11,6 +11,8 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
+**New in 1.6.2:** Pressing a tool with no input file or folder chosen now plays the Windows alert sound, explains what to do, and puts the cursor in the Input box. (Join, Crossfade and Slideshow still let you list clips inside their own window.)
+
 **New in 1.6.1:** **Full file report** now saves a readable `full report <file name>.txt` (summary first, then the complete ffprobe data) in the output folder and opens it in Notepad.
 
 **New in 1.6.0:**

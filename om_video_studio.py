@@ -62,7 +62,7 @@ from pathlib import Path
 #  *_EXT sets: decide which files the "kind" checker accepts for each operation
 #  and which extensions the file pickers show.
 APP = "O.M. Video Studio"
-VERSION = "1.6.1"
+VERSION = "1.6.2"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -2534,10 +2534,27 @@ def gui():
     cat_var = tk.StringVar(value=settings.get("cat", "Video") if settings.get("cat") in CATEGORIES + ["Favourites"] else "Video")
     ops_by_id = {o["id"]: o for o in OPS}
 
+    # Button press handler: checks an input is chosen before opening an operation's option window.
+    def open_op(spec):
+        """Operation button pressed. If no input file/folder is chosen yet, play the Windows warning sound, tell the user
+        and put the cursor in the Input box instead of opening the option window. Operations that let you list their own
+        clips/photos inside their window (join, crossfade, slideshow: folder_one) may start with an empty Input box."""
+        p = path_var.get().strip().strip('"')
+        if not spec.get("folder_one") and not current_multi() and not (p and os.path.exists(p)):
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)  # the standard Windows alert sound (Windows only)
+            except Exception:  # noqa: BLE001
+                root.bell()
+            ent.focus_set()
+            messagebox.showwarning(APP, "Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.")
+            return
+        open_dialog(spec)
+
     # Lay operation buttons out in a responsive grid.
     def fill_buttons(fr, ops, start_row=1):
         for i, spec in enumerate(ops):
-            b = ttk.Button(fr, text=spec["label"].replace(" (", "\n("), style="Op.TButton", command=lambda s=spec: open_dialog(s))
+            b = ttk.Button(fr, text=spec["label"].replace(" (", "\n("), style="Op.TButton", command=lambda s=spec: open_op(s))
             b.grid(row=start_row + i // 3, column=i % 3, sticky="nsew", padx=6, pady=6)
         for col in range(3):
             fr.columnconfigure(col, weight=1, uniform="c")
