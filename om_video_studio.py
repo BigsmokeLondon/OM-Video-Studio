@@ -9,6 +9,40 @@ Standard library only (tkinter). Needs ffmpeg + ffprobe on PATH.
     python om_video_studio.py --selftest  # build + run every operation on a generated clip
     python om_video_studio.py --list      # list operations
 """
+# =============================================================================
+#  FILE MAP (read this first)
+# =============================================================================
+#  This single file is the whole application. Top to bottom it is laid out as:
+#
+#   1. Constants & paths ........ app name/version, file-type sets, where data lives
+#   2. ffmpeg location/install .. find_tool, refresh_tools, download + install_ffmpeg
+#   3. Error log ................ write_log -> om_video_studio_log.txt
+#   4. Helpers .................. tsec, probe, vcodec, aargs, atempo, Ctx, job
+#   5. Operation registry ....... OPS list + O()/register()/@op decorator
+#   6. Operations (the features). one function per button, grouped by category:
+#         Video, Format & Quality, Audio, Images & Frames, Analysis, Streaming,
+#         Video (extra), Combine, Text & Subtitles, Effects & Colour
+#   7. Engine ................... default_opts, execute, run_job, convert_opts
+#   8. Preview / queue engine ... format_commands, preview_frame, run_queue ...
+#   9. Settings & startup sound . load_settings / save_settings
+#  10. Languages ................ LANGS/TR (from om_translations.py), tr(), set_lang()
+#  11. Completion pings ......... generated WAV tones + play_ping()
+#  12. GUI ...................... gui(): the whole tkinter window, built in one function
+#  13. Self-test & CLI .......... selftest(), `--selftest`, `--list`, default = GUI
+#
+#  HOW A BUTTON WORKS (the key idea):
+#    Each feature is a *builder function* decorated with @op(...). The builder
+#    does NOT run ffmpeg. It receives the user's options `o` and a per-file
+#    context `c` (Ctx) and returns a list of "jobs" (dicts holding the ffmpeg
+#    argument list, the output path and the expected duration). The engine
+#    (execute -> run_job) then runs those jobs, streams progress, and handles
+#    cancel / GPU fallback / logging. Because builders are pure "args in, args
+#    out", the same code feeds the GUI, the "copy ffmpeg command" button, the
+#    queue, the live preview and the headless self-test.
+#
+#  This file is standard-library only (tkinter + a few optional extras that the
+#  GUI imports lazily: sv_ttk, tkinterdnd2, pywinstyles, certifi).
+#  Comments in this file are explanatory only - they do not change behaviour.
 import json
 import math
 import os
@@ -21,6 +55,12 @@ import tempfile
 import threading
 from pathlib import Path
 
+# --- 1. CONSTANTS & PATHS --------------------------------------------------
+#  APP / VERSION: shown in the title bar. CI reads the `VERSION = "x.y.z"` line
+#  with a regex (see .github/workflows/release.yml) and publishes release
+#  v<VERSION>, so bumping this line is how a new release is cut.
+#  *_EXT sets: decide which files the "kind" checker accepts for each operation
+#  and which extensions the file pickers show.
 APP = "O.M. Video Studio"
 VERSION = "1.6.1"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
@@ -28,17 +68,26 @@ VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
 SUB_EXT = {".srt", ".ass", ".vtt"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
+# STATE is process-wide mutable switches. "gpu" is toggled by the GPU checkbox
+#  and read by vcodec(); execute() flips it back to False if NVENC fails.
 STATE = {"gpu": False}
+# On Windows, stops a black console window flashing for every ffmpeg/ffprobe call.
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# Path logic - two modes:
+#    * running from source  : APP_DIR = folder of this .py, DATA_DIR = same folder
+#    * frozen (PyInstaller) : APP_DIR = folder of the .exe, RES_DIR = the temp
+#      _MEIPASS bundle (read-only Resource/ + app.ico), DATA_DIR = %LOCALAPPDATA%
 FROZEN = bool(getattr(sys, "frozen", False))  # True when running as the installed .exe
 APP_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))  # bundled read-only files (Resource/, app.ico)
 # Installed copies live in Program Files (read-only), so logs and the downloaded ffmpeg go in the user's data folder.
 DATA_DIR = (Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "O.M. Video Studio") if FROZEN else APP_DIR
+# FFMPEG_HOME: where install_ffmpeg() unpacks a downloaded ffmpeg. SETTINGS_PATH: per-user JSON (theme, language, favourites, last values...).
 FFMPEG_HOME = DATA_DIR / "ffmpeg"
 SETTINGS_PATH = Path.home() / ".om_video_studio.json"
 
 
+# One-off upgrade helper for the old product name (FFmpeg Studio 1.0.x). Runs once at import, never raises.
 def _migrate_old_data():
     """Versions 1.0.x were called 'O.M. FFmpeg Studio': carry their data folder (incl. the downloaded ffmpeg) and settings across."""
     try:
@@ -61,16 +110,19 @@ def _migrate_old_data():
 _migrate_old_data()
 
 
+# --- 2. LOCATING / INSTALLING FFMPEG ---------------------------------------------
 def find_tool(name):
     """ffmpeg/ffprobe/ffplay: the user's own install on PATH first, then the copy this app downloaded."""
     exe = name + (".exe" if os.name == "nt" else "")
     return shutil.which(name) or next((str(d / exe) for d in (FFMPEG_HOME / "bin", FFMPEG_HOME) if (d / exe).exists()), None)
 
 
+# FFMPEG / FFPROBE hold the executable paths used by every subprocess call. They are module globals so refresh_tools() can re-point them after an install.
 FFMPEG = find_tool("ffmpeg") or "ffmpeg"
 FFPROBE = find_tool("ffprobe") or "ffprobe"
 
 
+# Re-run the lookup (called after install_ffmpeg succeeds).
 def refresh_tools():
     global FFMPEG, FFPROBE
     FFMPEG = find_tool("ffmpeg") or "ffmpeg"
@@ -78,12 +130,14 @@ def refresh_tools():
     return bool(find_tool("ffmpeg") and find_tool("ffprobe"))
 
 
+# Download sources for the in-app installer, tried in order. The first is a full GPL build (includes libvidstab for Stabilise).
 FFMPEG_URLS = [  # first: full GPL build (has libvidstab etc.); fallback: gyan.dev essentials (no stabilise filter)
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
     "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
 ]
 
 
+# urlopen with retries and a certifi-backed SSL context, so downloads work on machines with missing/old Windows root certificates.
 def urlopen_robust(req, timeout=30):
     """urlopen that survives PCs whose Windows root-certificate store is incomplete (common on fresh installs):
     try the system certificates first, then the bundled certifi list."""
@@ -109,6 +163,7 @@ def urlopen_robust(req, timeout=30):
     raise last
 
 
+# Streams a URL to disk, calling report(text) with percentages so the GUI can show progress.
 def download_file(url, dest, report):
     """Download url to dest with progress. Falls back to Windows' own curl.exe (which can fetch missing root certificates)."""
     import urllib.request
@@ -137,6 +192,7 @@ def download_file(url, dest, report):
         raise RuntimeError("curl: " + (r.stderr or "").strip()[-200:])
 
 
+# Download the zip, unpack into FFMPEG_HOME, locate bin/ffmpeg.exe, refresh_tools(). Returns (ok, message). Called from the GUI's offer_ffmpeg_install().
 def install_ffmpeg(report):
     """Download ffmpeg into DATA_DIR/ffmpeg (no admin needed). report(fraction, text). Returns (ok, message)."""
     import zipfile
@@ -188,6 +244,7 @@ def install_ffmpeg(report):
     return False, "Could not download ffmpeg (" + last + "). Check your internet connection, or install it yourself with:  winget install Gyan.FFmpeg"
 
 
+# --- 3. PROBLEM LOG ---------------------------------------------------------------
 def _log_path():
     """Problem log lives next to the program; falls back to the home folder if that is read-only."""
     for d in (DATA_DIR, Path.home()):
@@ -205,6 +262,7 @@ def _log_path():
 LOG_FILE = _log_path()
 
 
+# Used for failed ffmpeg runs (full command + output) and uncaught exceptions; ask users to send this file when reporting a bug.
 def write_log(text):
     """Append a timestamped entry to om_video_studio_log.txt (trimmed to ~1 MB). Never raises."""
     if not LOG_FILE:
@@ -219,6 +277,7 @@ def write_log(text):
         pass
 
 
+# Route any uncaught Python exception into the log before the default handler prints it.
 def _excepthook(et, ev, tb):
     import traceback
     write_log("UNCAUGHT ERROR\n" + "".join(traceback.format_exception(et, ev, tb)))
@@ -229,6 +288,10 @@ sys.excepthook = _excepthook
 
 
 # --------------------------------------------------------------------------- helpers
+# --- 4. HELPERS -------------------------------------------------------------
+#  tsec: lenient time parser used by every time box. Accepts plain seconds
+#  ("90"), h:m:s ("1:02:03.5") and the app's slider format min:sec:millis
+#  ("001:22:400").
 def tsec(s):
     """'1:02:03.5' / '90' / '001:22:400' (min:sec:ms) / '' -> seconds."""
     s = str(s).strip()
@@ -243,6 +306,7 @@ def tsec(s):
     return t
 
 
+# Run ffprobe once and return a flat dict: duration, first real video stream (ignores cover art), first audio stream, width/height/fps, size, bitrate, plus the raw JSON. Failures yield an 'empty' dict rather than raising.
 def probe(path):
     try:
         r = subprocess.run([FFPROBE, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)],
@@ -270,6 +334,7 @@ def probe(path):
                 size=int(fmt.get("size", 0) or 0), bitrate=int(fmt.get("bit_rate", 0) or 0))
 
 
+# One-line description of a file for the info strip under the Input box.
 def summary(info, path):
     parts = [Path(path).name]
     if info["dur"]:
@@ -284,12 +349,14 @@ def summary(info, path):
     return "  |  ".join(parts)
 
 
+# H.264 encoder arguments. CPU path = libx264 veryfast + CRF; GPU path = NVIDIA NVENC with constant-quality VBR. yuv420p keeps output playable everywhere.
 def vcodec(crf=20):
     if STATE["gpu"]:
         return ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", str(crf), "-b:v", "0", "-pix_fmt", "yuv420p"]
     return ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf), "-pix_fmt", "yuv420p"]
 
 
+# Audio encoder presets. aargs(ext) picks one by output extension (default AAC 192k).
 AAC = ["-c:a", "aac", "-b:a", "192k"]
 _AMAP = {".mp3": ["-c:a", "libmp3lame", "-q:a", "2"], ".wav": ["-c:a", "pcm_s16le"], ".flac": ["-c:a", "flac"],
          ".m4a": AAC, ".aac": AAC, ".ogg": ["-c:a", "libvorbis", "-q:a", "5"], ".opus": ["-c:a", "libopus", "-b:a", "128k"],
@@ -300,6 +367,7 @@ def aargs(ext):
     return _AMAP.get(ext, AAC)
 
 
+# ffmpeg's atempo only accepts 0.5-2.0 per stage, so bigger/smaller factors are expressed as a chain (e.g. 4x = atempo=2,atempo=2).
 def atempo(f):
     parts = []
     while f > 2.0:
@@ -312,6 +380,10 @@ def atempo(f):
     return ",".join(f"atempo={p:.5f}" for p in parts)
 
 
+# Ctx = everything a builder needs to know about ONE input file: its path,
+#  stem, extension, output folder, a scratch folder (tmp), and probe results.
+#  Ctx.out(suffix) invents a non-clashing output name next to the source
+#  (name_suffix.ext, then name_suffix_2.ext ...) so nothing is ever overwritten.
 class Ctx:
     def __init__(self, src, outdir, tmp):
         p = Path(src)
@@ -340,6 +412,10 @@ class Ctx:
         return self.ext if self.ext in _AMAP else ".m4a"
 
 
+# job(): the unit of work a builder returns. Keys: args (ffmpeg arguments, without
+#  the leading ffmpeg and -i handling), out (expected output path), dur (seconds,
+#  used for the progress bar). Extra keywords are kept - e.g. func=<callable>
+#  for pure-Python jobs (the full-report writer) and tmpout for multi-step jobs.
 def job(args, out=None, dur=0.0, **kw):
     d = dict(args=args, out=out, dur=dur)
     d.update(kw)
@@ -347,17 +423,29 @@ def job(args, out=None, dur=0.0, **kw):
 
 
 # --------------------------------------------------------------------------- registry
+# OPS is the master list of operations. Everything else (the button grids, the
+#  option dialogs, the queue, the self-test, the translation checks) is driven by
+#  iterating this list - to add a feature you only add one @op function.
+#  Each entry: cat (category tab), id (stable key, also used by the queue and
+#  favourites), label (button text), fn (the builder), opts (option widgets),
+#  kind (what input it accepts), tip (hint text), folder_one (see below).
 OPS = []
 
 
+# O(...) describes one option widget. type is one of:
+#    text / int / float / bool / choice / file / files
+#  `choices` is for 'choice'; `ftype` filters file pickers (audio, image, sub,
+#  lut, video, any).
 def O(key, label, type="text", default="", choices=None, ftype="any"):
     return dict(key=key, label=label, type=type, default=default, choices=choices or [], ftype=ftype)
 
 
+# Append an operation to OPS. kind: video | audio | image | sub | any (used by kind_ok to skip incompatible files in a batch). folder_one: operations that take a whole folder as ONE job (e.g. slideshow, join) instead of one job per file.
 def register(cat, id, label, fn, opts=(), kind="video", tip="", folder_one=False):
     OPS.append(dict(cat=cat, id=id, label=label, fn=fn, opts=list(opts), kind=kind, tip=tip, folder_one=folder_one))
 
 
+# Decorator form of register(): @op(category, id, label, [options], kind=...).
 def op(cat, id, label, opts=(), kind="video", tip="", folder_one=False):
     def deco(fn):
         register(cat, id, label, fn, opts, kind, tip, folder_one)
@@ -365,7 +453,15 @@ def op(cat, id, label, opts=(), kind="video", tip="", folder_one=False):
     return deco
 
 
+# --- 6. OPERATIONS ----------------------------------------------------------
+#  Every function below follows the same contract:
+#      def b_xxx(o, c):   # o = dict of option values (already type-converted)
+#          ...            # c = Ctx for the current file
+#          return [job(args, out, dur)]
+#  Output names come from c.out(...) so originals are never touched.
+#  ======================= CATEGORY: VIDEO =======================
 # =========================================================================== VIDEO
+# Trim: -ss + -t. 'Re-encode' gives an exact cut, 'Copy' is instant but snaps to keyframes. Has live start/end frame preview sliders.
 @op("Video", "trim", "Trim / cut by time",
     [O("start", "Start (hh:mm:ss or seconds)", default="0"), O("end", "End (blank = to the end)", default=""),
      O("mode", "Mode", "choice", "Re-encode (exact cut)", ["Re-encode (exact cut)", "Copy (instant, cuts on keyframes)"])],
@@ -379,6 +475,7 @@ def b_trim(o, c):
     return [job(["-ss", f"{s}", "-i", c.src, "-t", f"{d}"] + vcodec() + AAC, c.out("_trim", ".mp4"), d)]
 
 
+# Join: concat filter over the selected file plus the extra clips; every clip is scaled/padded to the first clip's size, 30 fps, stereo 48 kHz, then re-encoded.
 @op("Video", "join", "Join clips into one",
     [O("files", "Clips to append after the selected file", "files")],
     tip="Easiest: leave the Input box empty and add ALL your clips below, in order (Add… or Add folder…). Or select a first clip and the list is appended after it. Clips are scaled to the first one's size.", folder_one=True)
@@ -402,6 +499,7 @@ def b_join(o, c):
     return [job(args, c.out("_joined", ".mp4"), total)]
 
 
+# Split: builds one job per segment (-ss/-t), either re-encoded (exact) or stream-copied (fast); files are named name_part_01, _02 ...
 @op("Video", "split", "Split into segments",
     [O("seconds", "Segment length (seconds)", "float", 59), O("mode", "Mode", "choice", "Re-encode (exact)", ["Re-encode (exact)", "Copy (fast)"])],
     tip="Cut a long video into equal parts, e.g. 59 s for Shorts/Reels.")
@@ -420,6 +518,7 @@ def b_split(o, c):
     return jobs
 
 
+# Speed: setpts for video + chained atempo for audio (see atempo()).
 @op("Video", "speed", "Change speed (slow-mo / time-lapse)",
     [O("factor", "Speed factor (0.5 = half speed, 4 = 4x faster)", "float", 2.0)])
 def b_speed(o, c):
@@ -430,6 +529,7 @@ def b_speed(o, c):
     return [job(a + vcodec() + AAC, c.out(f"_x{f:g}", ".mp4"), c.dur / f)]
 
 
+# Reverse: reverse/areverse filters. Needs the whole clip in RAM, hence the tip.
 @op("Video", "reverse", "Reverse playback", tip="Loads the whole clip in memory - use on short clips.")
 def b_reverse(o, c):
     a = ["-i", c.src, "-vf", "reverse"]
@@ -438,11 +538,13 @@ def b_reverse(o, c):
     return [job(a + vcodec() + AAC, c.out("_reversed", ".mp4"), c.dur)]
 
 
+# Resize presets: label -> target height. RES_CUSTOM is the menu entry that switches to the width/height boxes (-2 = keep aspect, even number).
 RES = {"144p": 144, "240p": 240, "320p": 320, "360p": 360, "480p": 480, "540p": 540, "720p (HD)": 720, "1080p (Full HD)": 1080,
        "1440p (2K)": 1440, "2160p (4K)": 2160, "4320p (8K)": 4320}
 RES_CUSTOM = "Custom (use the width / height boxes)"
 
 
+# Resize: presets name the SHORT side (so vertical videos work too); 'never enlarge' leaves smaller sources at their size; Custom uses the width/height boxes (-2 = auto, keeps aspect).
 @op("Video", "resize", "Resize",
     [O("preset", "Size", "choice", "720p (HD)", list(RES) + [RES_CUSTOM]),
      O("noup", "Never enlarge (keep the original if it is already smaller)", "bool", True),
@@ -464,11 +566,13 @@ def b_resize(o, c):
     return [job(["-i", c.src, "-vf", vf] + vcodec() + AAC, c.out(tag, ".mp4"), c.dur)]
 
 
+# Builds the crop=w:h:x:y filter from the option dict - shared by the Crop op and the live preview so both agree.
 def crop_filter(o):
     e = lambda v: v.replace(",", "\\,")  # noqa: E731  commas separate filters, so escape them in expressions
     return f"crop={e(o['w'])}:{e(o['h'])}:{e(o['x'])}:{e(o['y'])}"
 
 
+# Crop: has the crop-result live preview with draggable x/y/width/height sliders.
 @op("Video", "crop", "Crop",
     [O("w", "Width", default="min(iw,ih)"), O("h", "Height", default="min(iw,ih)"),
      O("x", "X offset", default="(iw-ow)/2"), O("y", "Y offset", default="(ih-oh)/2")],
@@ -477,6 +581,7 @@ def b_crop(o, c):
     return [job(["-i", c.src, "-vf", crop_filter(o)] + vcodec() + AAC, c.out("_crop", ".mp4"), c.dur)]
 
 
+# Rotate: transpose=1 / transpose=2 for 90 degrees either way, hflip+vflip for 180.
 @op("Video", "rotate", "Rotate",
     [O("how", "Rotation", "choice", "90 clockwise", ["90 clockwise", "90 counter-clockwise", "180"])])
 def b_rotate(o, c):
@@ -484,6 +589,7 @@ def b_rotate(o, c):
     return [job(["-i", c.src, "-vf", vf] + vcodec() + AAC, c.out("_rot", ".mp4"), c.dur)]
 
 
+# Flip/mirror: hflip / vflip.
 @op("Video", "flip", "Flip / mirror",
     [O("how", "Direction", "choice", "Horizontal (mirror)", ["Horizontal (mirror)", "Vertical", "Both"])])
 def b_flip(o, c):
@@ -491,6 +597,7 @@ def b_flip(o, c):
     return [job(["-i", c.src, "-vf", vf] + vcodec() + AAC, c.out("_flip", ".mp4"), c.dur)]
 
 
+# Aspect ratio for TikTok/Reels/Shorts etc: choose blurred background, solid colour bars, or crop-to-fill (all via one filter_complex).
 @op("Video", "aspect", "Change aspect ratio (TikTok / Reels / Shorts)",
     [O("target", "Target", "choice", "9:16 vertical (1080x1920)", ["9:16 vertical (1080x1920)", "1:1 square (1080x1080)", "4:5 portrait (1080x1350)", "16:9 landscape (1920x1080)"]),
      O("fill", "Fill the bars with", "choice", "Blurred background", ["Blurred background", "Solid colour", "Crop to fill"]),
@@ -510,12 +617,14 @@ def b_aspect(o, c):
     return [job(["-i", c.src, "-filter_complex", fc, "-map", "[v]", "-map", "0:a?"] + vcodec() + AAC, c.out(f"_{tag}", ".mp4"), c.dur)]
 
 
+# Loop: -stream_loop repeats the input N-1 extra times; the result is re-encoded to MP4.
 @op("Video", "loop", "Loop the clip", [O("times", "Play it this many times in total", "int", 3)])
 def b_loop(o, c):
     t = max(2, int(o["times"]))
     return [job(["-stream_loop", str(t - 1), "-i", c.src] + vcodec() + AAC, c.out(f"_loop{t}", ".mp4"), c.dur * t)]
 
 
+# Stabilise: two ffmpeg passes (vidstabdetect then vidstabtransform). Needs libvidstab; the self-test skips it if the build lacks it.
 @op("Video", "stabilise", "Stabilise shaky footage", [O("shake", "Shakiness 1-10", "int", 5), O("smooth", "Smoothing frames", "int", 15)],
     tip="Two passes with the vidstab filter (needs an ffmpeg build with libvidstab, e.g. the Gyan full build).")
 def b_stab(o, c):
@@ -526,7 +635,9 @@ def b_stab(o, c):
     return [d1, d2]
 
 
+# ======================= CATEGORY: FORMAT & QUALITY =======================
 # =========================================================================== FORMAT & QUALITY
+# Convert: re-encode to mp4/mov/mkv (H.264+AAC), webm (VP9+Opus), avi (mpeg4+MP3) or an animated gif (12 fps, 480 px, optimised palette).
 @op("Format & Quality", "convert", "Convert video format",
     [O("target", "Convert to", "choice", "mp4", ["mp4", "mov", "mkv", "webm", "avi", "gif"]), O("crf", "Quality (CRF, lower = better)", "int", 20)],
     tip="Re-encodes. For a lossless container swap use 'Re-wrap'.")
@@ -543,6 +654,7 @@ def b_convert(o, c):
     return [job(a, c.out("_conv", "." + t), c.dur)]
 
 
+# Remux: -c copy into a new container - instant, no quality change.
 @op("Format & Quality", "remux", "Re-wrap container (no quality loss)",
     [O("target", "New container", "choice", "mp4", ["mp4", "mkv", "mov"])],
     tip="Copies the streams untouched - takes seconds. Works when codecs fit the new container (H.264 + AAC does).")
@@ -554,11 +666,13 @@ def b_remux(o, c):
     return [job(a, c.out("_remux", "." + t), c.dur)]
 
 
+# Fast-start: moves the MP4 'moov' atom to the front so web players start immediately (-movflags +faststart, stream copy).
 @op("Format & Quality", "faststart", "Prepare for web playback (fast-start MP4)")
 def b_faststart(o, c):
     return [job(["-i", c.src, "-c", "copy", "-movflags", "+faststart"], c.out("_web", ".mp4"), c.dur)]
 
 
+# Social presets: platform name -> (width, height, fps, max-seconds hint).
 SOCIAL = {  # name -> (width, height, fps or 0 = keep, max seconds hint)
     "TikTok (9:16 1080x1920)": (1080, 1920, 30, "tiktok"),
     "Instagram Reels (9:16 1080x1920)": (1080, 1920, 30, "reels"),
@@ -569,6 +683,7 @@ SOCIAL = {  # name -> (width, height, fps or 0 = keep, max seconds hint)
 }
 
 
+# Social export: fits the video to the platform's frame size/fps (blurred background, black bars, or crop-to-fill), H.264 high profile + AAC 128k, fast-start.
 @op("Format & Quality", "social", "Export for social media (TikTok / Reels / Shorts / YouTube / X)",
     [O("platform", "Platform", "choice", "TikTok (9:16 1080x1920)", list(SOCIAL)),
      O("fill", "If the shape does not match", "choice", "Blurred background", ["Blurred background", "Black bars", "Crop to fill"])],
@@ -591,6 +706,7 @@ def b_social(o, c):
     return [job(a, c.out(f"_{tag}", ".mp4"), c.dur)]
 
 
+# Compress to a target size: bitrate = target MB / duration (95% budget, minus audio, capped at the source's own bitrate), then TWO x264 passes - pass 1 analyses to null, pass 2 writes the file.
 @op("Format & Quality", "compress", "Compress to a target size",
     [O("preset", "Target", "choice", "Custom (use MB below)",
        ["Custom (use MB below)", "Discord 25 MB", "WhatsApp 16 MB", "Email 10 MB", "Telegram 50 MB"]),
@@ -610,6 +726,7 @@ def b_compress(o, c):
     return [p1, p2]
 
 
+# Recode: pick codec (H.264 / H.265 / VP9), CRF quality, frame rate, height and audio bitrate independently; the scale/fps filters are only added when non-zero.
 @op("Format & Quality", "recode", "Change codec / frame rate / resolution",
     [O("codec", "Video codec", "choice", "H.264", ["H.264", "H.265 (HEVC)", "VP9"]),
      O("crf", "Quality (CRF)", "int", 22), O("fps", "Frame rate (0 = keep)", "int", 0),
@@ -634,7 +751,9 @@ def b_recode(o, c):
     return [job(a, c.out("_recode", ext), c.dur)]
 
 
+# ======================= CATEGORY: AUDIO =======================
 # =========================================================================== AUDIO
+# Shared helper: apply an audio filter chain `af` and encode in the right format for the source (used by volume, denoise, eq, fade...).
 def _afilt(c, suffix, af):
     if c.has_v:
         ext = c.ext if c.ext in (".mp4", ".mkv", ".mov", ".m4v") else ".mkv"
@@ -645,16 +764,19 @@ def _afilt(c, suffix, af):
     return [job(args, c.out(suffix, ext), c.dur)]
 
 
+# 'Extract audio from video' and 'Convert audio format' share this builder; they are registered with two register() calls just below.
 def b_extract(o, c):
     t = o["format"]
     return [job(["-i", c.src, "-vn"] + aargs("." + t), c.out("_audio", "." + t), c.dur)]
 
 
+# Audio formats offered by extract/convert.
 _FORMATS = ["mp3", "wav", "m4a", "flac", "ogg", "opus"]
 register("Audio", "extract", "Extract audio from video", b_extract, [O("format", "Format", "choice", "mp3", _FORMATS)], kind="video")
 register("Audio", "aconvert", "Convert audio format", b_extract, [O("format", "Format", "choice", "mp3", _FORMATS)], kind="audio")
 
 
+# Loudness normalise: EBU R128 loudnorm filter, target in LUFS.
 @op("Audio", "loudnorm", "Normalise loudness",
     [O("target", "Target", "choice", "-14 LUFS  YouTube / Spotify", ["-14 LUFS  YouTube / Spotify", "-16 LUFS  Podcast / Apple", "-23 LUFS  Broadcast (EBU R128)"])],
     kind="any")
@@ -663,6 +785,7 @@ def b_loudnorm(o, c):
     return _afilt(c, "_norm", f"loudnorm=I={i}:TP=-1.5:LRA=11")
 
 
+# Remove silence: silenceremove with start/stop thresholds.
 @op("Audio", "silence", "Remove silence",
     [O("db", "Silence threshold (dB)", "int", -45), O("secs", "Minimum silence to cut (seconds)", "float", 0.5)],
     kind="any", tip="Output is audio only.")
@@ -673,6 +796,7 @@ def b_silence(o, c):
     return [job(["-i", c.src, "-vn", "-af", af] + aargs(ext), c.out("_nosilence", ext), c.dur)]
 
 
+# Trim audio by time.
 @op("Audio", "atrim", "Trim audio", [O("start", "Start", default="0"), O("end", "End (blank = to the end)", default="")], kind="audio")
 def b_atrim(o, c):
     s = tsec(o["start"])
@@ -681,6 +805,7 @@ def b_atrim(o, c):
     return [job(["-ss", f"{s}", "-i", c.src, "-t", f"{max(0.1, e - s)}", "-vn"] + aargs(ext), c.out("_trim", ext), e - s)]
 
 
+# Audio fade in/out; fade-out start is computed from the file duration.
 @op("Audio", "fade", "Fade in / out",
     [O("fin", "Fade in (seconds)", "float", 2), O("fout", "Fade out (seconds)", "float", 2), O("video", "Fade the picture too", "bool", False)], kind="any")
 def b_fade(o, c):
@@ -692,16 +817,19 @@ def b_fade(o, c):
     return _afilt(c, "_fade", af)
 
 
+# Gain in dB.
 @op("Audio", "volume", "Change volume", [O("db", "Gain in dB (+6 = louder, -6 = quieter)", "float", 6)], kind="any")
 def b_volume(o, c):
     return _afilt(c, "_vol", f"volume={o['db']}dB")
 
 
+# Change speed without changing pitch (atempo chain).
 @op("Audio", "tempo", "Change audio speed (keeps pitch)", [O("f", "Speed factor", "float", 1.25)], kind="audio")
 def b_tempo(o, c):
     return _afilt(c, "_tempo", atempo(float(o["f"])))
 
 
+# Pitch shift in semitones: asetrate to move pitch, then atempo to restore speed.
 @op("Audio", "pitch", "Change pitch", [O("st", "Semitones (+/-12)", "float", 2)], kind="audio")
 def b_pitch(o, c):
     sr = int((c.info["a"] or {}).get("sample_rate", 44100))
@@ -709,11 +837,13 @@ def b_pitch(o, c):
     return _afilt(c, "_pitch", f"asetrate={sr * r:.0f},aresample={sr},{atempo(1 / r)}")
 
 
+# afftdn denoiser; noise floor in dB.
 @op("Audio", "denoise", "Denoise", [O("nf", "Noise floor (dB, -20 gentle ... -40 strong)", "int", -25)], kind="any")
 def b_denoise(o, c):
     return _afilt(c, "_clean", f"afftdn=nf={o['nf']}")
 
 
+# High-pass / low-pass filters at the given cut-off frequencies (0 = off).
 @op("Audio", "eq", "High-pass / low-pass filter",
     [O("hp", "Cut below (Hz, 0 = off)", "int", 80), O("lp", "Cut above (Hz, 0 = off)", "int", 0)], kind="any")
 def b_eq(o, c):
@@ -727,6 +857,7 @@ def b_eq(o, c):
     return _afilt(c, "_eq", ",".join(parts))
 
 
+# Shared by 'Add music / replace audio' and 'Add narration': mixes a second audio file under the original (amix with weights) or replaces the original, optionally looping the new audio to fit.
 def b_mix(o, c):
     new = o["file"]
     if not new:
@@ -742,6 +873,7 @@ def b_mix(o, c):
     return [job(a, c.out("_mixed", ext), c.dur)]
 
 
+# Choices for what to do with the existing audio.
 _MIXCH = ["Mix under the original audio", "Replace the original audio"]
 register("Audio", "mix", "Add music / replace audio", b_mix,
          [O("file", "Audio file", "file", ftype="audio"), O("mode", "Mode", "choice", _MIXCH[0], _MIXCH),
@@ -753,6 +885,7 @@ register("Audio", "narration", "Add narration / voiceover", b_mix,
          tip="Lays a voiceover over the video, ducking the original sound.")
 
 
+# Channels: downmix to mono or split left/right into two files.
 @op("Audio", "channels", "Mono / split stereo channels",
     [O("how", "Action", "choice", "Convert to mono", ["Convert to mono", "Split into left + right files"])], kind="any")
 def b_channels(o, c):
@@ -766,18 +899,22 @@ def b_channels(o, c):
                 r, c.dur, outs=[l])]
 
 
+# ======================= CATEGORY: IMAGES & FRAMES =======================
 # =========================================================================== IMAGES & FRAMES
+# Thumbnail: one frame at a chosen time (live preview supported).
 @op("Images & Frames", "thumb", "Grab a thumbnail / single frame", [O("t", "Time (hh:mm:ss or seconds)", default="1")])
 def b_thumb(o, c):
     return [job(["-ss", f"{tsec(o['t'])}", "-i", c.src, "-frames:v", "1", "-q:v", "2"], c.out("_thumb", ".jpg"), 0)]
 
 
+# Frames: image sequence into a new folder, one frame every N seconds.
 @op("Images & Frames", "frames", "Extract frames to a folder", [O("every", "One frame every N seconds", "float", 1)])
 def b_frames(o, c):
     d = c.out("_frames", folder=True)
     return [job(["-i", c.src, "-vf", f"fps=1/{float(o['every'])}", os.path.join(d, "frame_%04d.png")], d, c.dur, mkdir=d, raw_out=True)]
 
 
+# Contact sheet: tile filter builds a grid of evenly spaced frames in one image.
 @op("Images & Frames", "contact", "Contact sheet (grid of frames)",
     [O("cols", "Columns", "int", 5), O("rows", "Rows", "int", 4), O("tw", "Thumbnail width", "int", 320)])
 def b_contact(o, c):
@@ -787,6 +924,7 @@ def b_contact(o, c):
                 c.out("_contact", ".jpg"), c.dur)]
 
 
+# GIF: palettegen + paletteuse for good colours at small size.
 @op("Images & Frames", "gif", "Make a GIF (optimised palette)",
     [O("start", "Start", default="0"), O("dur", "Length (seconds)", "float", 5), O("fps", "Frames per second", "int", 12), O("w", "Width", "int", 480)])
 def b_gif(o, c):
@@ -794,6 +932,7 @@ def b_gif(o, c):
     return [job(["-ss", f"{tsec(o['start'])}", "-t", f"{o['dur']}", "-i", c.src, "-vf", vf, "-loop", "0"], c.out("_anim", ".gif"), float(o["dur"]))]
 
 
+# Image convert/resize (kind=image): jpg / png / webp with optional width (0 = keep); jpg uses -q:v 2.
 @op("Images & Frames", "imgconv", "Convert / resize image",
     [O("fmt", "Format", "choice", "jpg", ["jpg", "png", "webp"]), O("w", "Width (0 = keep)", "int", 0)], kind="image",
     tip="Pick a folder with 'Batch folder' to convert every image in it.")
@@ -806,7 +945,10 @@ def b_imgconv(o, c):
     return [job(a + ["-frames:v", "1"], c.out("_conv", "." + o["fmt"]), 0)]
 
 
+# ======================= CATEGORY: ANALYSIS =======================
+#  These produce reports/images rather than edited media. The detectors run ffmpeg to the null muxer with info=True; run_job then shows only the log lines matching the job's `show` regex (or the last `tail` lines) in the app's log box. Nothing is written to disk.
 # =========================================================================== ANALYSIS
+# Builds the human-readable full ffprobe report text (format, every stream, tags, chapters).
 def _probe_text(c):
     """Readable summary of a file (what you usually look for first), then the complete ffprobe data."""
     raw = c.info["raw"] or {}
@@ -841,6 +983,7 @@ def _probe_text(c):
     return "\n".join(L)
 
 
+# Returns a function(log) that writes the report to the .txt file; stored in the job as func= so run_job calls it instead of ffmpeg. After the job, the GUI opens the file in Notepad on Windows.
 def _probe_report(c, path):
     def f(log):
         text = _probe_text(c)
@@ -856,6 +999,7 @@ def _probe_report(c, path):
     return f
 
 
+# Full file report: writes 'full report <name>.txt' in the output folder (never overwrites - adds (2), (3)...).
 @op("Analysis", "probe", "Full file report (ffprobe)", kind="any")
 def b_probe(o, c):
     p = c.outdir / f"full report {c.stem}.txt"
@@ -866,47 +1010,57 @@ def b_probe(o, c):
     return [job([], str(p), 0, func=_probe_report(c, str(p)))]
 
 
+# Detect silences (silencedetect filter); matching 'silence_' lines are shown in the log.
 @op("Analysis", "silencedetect", "Detect silences", [O("db", "Threshold (dB)", "int", -35), O("d", "Min length (s)", "float", 0.5)], kind="any")
 def b_sd(o, c):
     return [job(["-i", c.src, "-af", f"silencedetect=noise={o['db']}dB:d={o['d']}", "-vn", "-f", "null", os.devnull], None, c.dur, info=True, show=r"silence_")]
 
 
+# Detect black frames.
 @op("Analysis", "blackdetect", "Detect black frames", [O("d", "Min length (s)", "float", 0.1)])
 def b_bd(o, c):
     return [job(["-i", c.src, "-vf", f"blackdetect=d={o['d']}:pic_th=0.98", "-an", "-f", "null", os.devnull], None, c.dur, info=True, show=r"black_")]
 
 
+# Detect frozen frames.
 @op("Analysis", "freezedetect", "Detect frozen frames", [O("d", "Min freeze (s)", "float", 2)])
 def b_fd(o, c):
     return [job(["-i", c.src, "-vf", f"freezedetect=n=-60dB:d={o['d']}", "-an", "-f", "null", os.devnull], None, c.dur, info=True, show=r"freeze_")]
 
 
+# Scene-change detection via select='gt(scene,T)',showinfo; the log lines containing pts_time are the cut times.
 @op("Analysis", "scenes", "Detect scene changes", [O("th", "Sensitivity 0.1-0.9 (lower = more cuts)", "float", 0.4)])
 def b_sc(o, c):
     return [job(["-i", c.src, "-vf", f"select='gt(scene,{o['th']})',showinfo", "-an", "-f", "null", os.devnull], None, c.dur, info=True, show=r"pts_time:[\d.]+")]
 
 
+# Loudness measurement (ebur128) - prints integrated LUFS etc.
 @op("Analysis", "loudness", "Measure loudness (LUFS)", kind="any")
 def b_ld(o, c):
     return [job(["-i", c.src, "-af", "ebur128=peak=true", "-vn", "-f", "null", os.devnull], None, c.dur, info=True, tail=14)]
 
 
+# Waveform PNG (showwavespic).
 @op("Analysis", "wave", "Waveform image", kind="any")
 def b_wave(o, c):
     return [job(["-i", c.src, "-filter_complex", "showwavespic=s=1600x400:colors=#3b82f6", "-frames:v", "1"], c.out("_wave", ".png"), 0)]
 
 
+# Spectrogram PNG (showspectrumpic).
 @op("Analysis", "spectro", "Spectrogram image", kind="any")
 def b_spec(o, c):
     return [job(["-i", c.src, "-lavfi", "showspectrumpic=s=1600x800", "-frames:v", "1"], c.out("_spectrogram", ".png"), 0)]
 
 
+# Strip metadata with -map_metadata -1 and stream copy.
 @op("Analysis", "stripmeta", "Strip metadata (no re-encode)", kind="any")
 def b_strip(o, c):
     return [job(["-i", c.src, "-map", "0", "-map_metadata", "-1", "-c", "copy"], c.out("_clean"), c.dur)]
 
 
+# ======================= CATEGORY: STREAMING =======================
 # =========================================================================== STREAMING
+# HLS: writes an .m3u8 playlist plus .ts segments into a new folder (folder output).
 @op("Streaming", "hls", "Create HLS stream (m3u8 + segments)", [O("seg", "Segment length (s)", "int", 6)])
 def b_hls(o, c):
     d = c.out("_hls", folder=True)
@@ -914,7 +1068,9 @@ def b_hls(o, c):
                  "-hls_segment_filename", os.path.join(d, "seg_%03d.ts"), os.path.join(d, "index.m3u8")], d, c.dur, mkdir=d, raw_out=True)]
 
 
+# ======================= VIDEO (extra ops added later; they still appear on the Video tab) =======================
 # =========================================================================== VIDEO (extra)
+# Freeze frame: a MULTI-STEP op - cut before/at/after the freeze point into temp files (tmpout), hold one frame for N seconds, then concat the pieces into the final file.
 @op("Video", "freeze", "Freeze a frame",
     [O("t", "Freeze at (hh:mm:ss or seconds)", default="2"), O("d", "Hold for (seconds)", "float", 3)])
 def b_freeze(o, c):
@@ -946,7 +1102,9 @@ def b_freeze(o, c):
     return jobs
 
 
+# ======================= CATEGORY: COMBINE =======================
 # =========================================================================== COMBINE
+# Corner/centre presets for overlays; _xy(pos, margin) converts a preset name to ffmpeg overlay x:y expressions.
 _POS = ["Bottom-right", "Bottom-left", "Top-right", "Top-left", "Centre"]
 
 
@@ -955,6 +1113,7 @@ def _xy(pos, m):
             "Top-right": (f"W-w-{m}", f"{m}"), "Top-left": (f"{m}", f"{m}"), "Centre": ("(W-w)/2", "(H-h)/2")}[pos]
 
 
+# Logo/watermark overlay with size (% of video width), opacity and corner.
 @op("Combine", "watermark", "Add logo / watermark",
     [O("img", "Logo image (PNG works best)", "file", ftype="image"), O("pos", "Position", "choice", "Bottom-right", _POS),
      O("size", "Logo width (% of video width)", "int", 15), O("opacity", "Opacity (0.1-1)", "float", 0.8), O("margin", "Margin (pixels)", "int", 24)])
@@ -967,6 +1126,7 @@ def b_watermark(o, c):
     return [job(["-i", c.src, "-i", o["img"], "-filter_complex", fc, "-map", "[v]", "-map", "0:a?"] + vcodec() + AAC, c.out("_logo", ".mp4"), c.dur)]
 
 
+# Picture-in-picture: a second video scaled and overlaid on the main one.
 @op("Combine", "pip", "Picture-in-picture (small video over big)",
     [O("vid", "Small video", "file", ftype="video"), O("pos", "Position", "choice", "Bottom-right", _POS),
      O("size", "Small video width (% of main)", "int", 28), O("margin", "Margin (pixels)", "int", 24)])
@@ -979,6 +1139,7 @@ def b_pip(o, c):
     return [job(["-i", c.src, "-i", o["vid"], "-filter_complex", fc, "-map", "[v]", "-map", "0:a?"] + vcodec() + AAC, c.out("_pip", ".mp4"), c.dur)]
 
 
+# Grid: hstack/vstack/xstack to put several videos side by side.
 @op("Combine", "grid", "Side-by-side / grid of videos",
     [O("files", "Other videos to add", "files"), O("layout", "Layout", "choice", "Side by side", ["Side by side", "Stacked", "Grid (2 columns)"]),
      O("cw", "Width of each cell", "int", 640)],
@@ -1005,6 +1166,7 @@ def b_grid(o, c):
     return [job(args + ["-filter_complex", ";".join(fc), "-map", "[v]", "-map", "0:a?"] + vcodec() + AAC + ["-shortest"], c.out("_grid", ".mp4"), c.dur)]
 
 
+# Crossfade: xfade (video) + acrossfade (audio) between consecutive clips; offsets are computed from each clip's duration.
 @op("Combine", "crossfade", "Join clips with crossfade transitions",
     [O("files", "Clips to append after the selected file", "files"), O("tr", "Transition length (seconds)", "float", 1.0),
      O("style", "Style", "choice", "fade", ["fade", "dissolve", "fadeblack", "wipeleft", "wiperight", "slideleft", "slideright", "circleopen", "circleclose", "pixelize", "radial"])],
@@ -1041,6 +1203,7 @@ def b_crossfade(o, c):
     return [job(args + ["-filter_complex", ";".join(fc)] + maps + vcodec() + (AAC if has_a else []), c.out("_xfade", ".mp4"), L)]
 
 
+# Slideshow: images -> video, optional Ken Burns zoompan, optional music, crossfades between photos. Uses folder_one logic (several images = one video).
 @op("Combine", "slideshow", "Photos to video (slideshow / Ken Burns)",
     [O("files", "More photos to add", "files"), O("secs", "Seconds per photo", "float", 4),
      O("fx", "Effect", "choice", "Slow zoom in", ["Slow zoom in", "Slow zoom out", "None (still)"]),
@@ -1090,7 +1253,9 @@ def b_slideshow(o, c):
     return [job(a, c.out("_slideshow", ".mp4"), total)]
 
 
+# ======================= CATEGORY: TEXT & SUBTITLES =======================
 # =========================================================================== TEXT & SUBTITLES
+# Escaping helpers: ffmpeg filter strings treat : \\ ' % specially, and Windows paths contain drive colons - these make paths/text safe inside -vf.
 def esc_path(p):
     p = str(p).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
     return "'" + p + "'"
@@ -1100,6 +1265,7 @@ def esc_text(t):
     return t.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\u2019").replace("%", "\\%")
 
 
+# Pick a font file that exists on this OS (Windows Arial, else common Linux paths) for drawtext.
 def fontfile():
     for p in (r"C:\Windows\Fonts\arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf"):
         if os.path.exists(p):
@@ -1107,6 +1273,7 @@ def fontfile():
     return None
 
 
+# Burn captions into the picture with the subtitles filter.
 @op("Text & Subtitles", "burnsubs", "Burn in captions (SRT / ASS)",
     [O("sub", "Subtitle file (.srt / .ass)", "file", ftype="sub"), O("size", "Font size", "int", 24),
      O("pos", "Position", "choice", "Bottom", ["Bottom", "Middle", "Top"]), O("outline", "Outline thickness", "int", 2)])
@@ -1119,6 +1286,7 @@ def b_burn(o, c):
     return [job(["-i", c.src, "-vf", vf] + vcodec() + ["-c:a", "copy"], c.out("_captioned", ".mp4"), c.dur)]
 
 
+# Add subtitles as a separate (switchable) track, with language tag.
 @op("Text & Subtitles", "addsubs", "Add a soft subtitle track (can be turned off)",
     [O("sub", "Subtitle file (.srt)", "file", ftype="sub"), O("lang", "Language code (eng, urd, pan...)", default="eng")])
 def b_addsubs(o, c):
@@ -1130,18 +1298,21 @@ def b_addsubs(o, c):
                 c.out("_subs", ".mkv" if mkv else ".mp4"), c.dur)]
 
 
+# Extract the Nth subtitle track to a file.
 @op("Text & Subtitles", "extractsubs", "Extract subtitles from a video",
     [O("fmt", "Save as", "choice", "srt", ["srt", "ass", "vtt"]), O("track", "Subtitle track number (1 = first)", "int", 1)])
 def b_extractsubs(o, c):
     return [job(["-i", c.src, "-map", f"0:s:{int(o['track']) - 1}"], c.out("_subs", "." + o["fmt"]), 0)]
 
 
+# Convert between SRT / ASS / VTT.
 @op("Text & Subtitles", "convsubs", "Convert subtitle file format",
     [O("fmt", "Convert to", "choice", "srt", ["srt", "ass", "vtt"])], kind="sub", tip="Select a subtitle file (.srt, .ass, .vtt) at the top first.")
 def b_convsubs(o, c):
     return [job(["-i", c.src], c.out("_conv", "." + o["fmt"]), 0)]
 
 
+# Maps a position name ('Lower third', 'Top-right'...) to drawtext x/y expressions. _TPOS lists the names.
 def _textpos(pos, size):
     m = max(20, int(size) // 2)
     return {"Top": ("(w-text_w)/2", f"{m}"), "Middle": ("(w-text_w)/2", "(h-text_h)/2"), "Bottom": ("(w-text_w)/2", f"h-text_h-{m}"),
@@ -1152,6 +1323,7 @@ def _textpos(pos, size):
 _TPOS = ["Bottom", "Middle", "Top", "Lower third", "Top-left", "Top-right", "Bottom-left", "Bottom-right"]
 
 
+# Shared drawtext builder for the title and timer ops: font, size, colour, optional dark box and outline, enable='between(t,a,b)' for show/hide times.
 def _drawtext(c, text, o, suffix):
     ff = fontfile()
     x, y = _textpos(o["pos"], o["size"])
@@ -1169,6 +1341,7 @@ def _drawtext(c, text, o, suffix):
     return [job(["-i", c.src, "-vf", "drawtext=" + ":".join(parts)] + vcodec() + ["-c:a", "copy"], c.out(suffix, ".mp4"), c.dur)]
 
 
+# Title / lower-third text.
 @op("Text & Subtitles", "drawtext", "Add a title / lower third",
     [O("text", "Text", default="My Title"), O("pos", "Position", "choice", "Bottom", _TPOS), O("size", "Font size", "int", 56),
      O("color", "Colour", default="white"), O("box", "Dark box behind the text", "bool", True),
@@ -1179,6 +1352,7 @@ def b_drawtext(o, c):
     return _drawtext(c, esc_text(o["text"]), o, "_title")
 
 
+# Timer / countdown using drawtext's %{eif:...} time expressions.
 @op("Text & Subtitles", "timer", "Add a timer / countdown",
     [O("mode", "Type", "choice", "Count up from 0", ["Count up from 0", "Count down from…"]), O("from", "Countdown from (seconds)", "int", 60),
      O("pos", "Position", "choice", "Top-right", _TPOS), O("size", "Font size", "int", 56), O("color", "Colour", default="white"),
@@ -1191,13 +1365,16 @@ def b_timer(o, c):
     return _drawtext(c, text, o, "_timer")
 
 
+# ======================= CATEGORY: EFFECTS & COLOUR =======================
 # =========================================================================== EFFECTS & COLOUR
+# Shared helper: run a simple video-filter chain and keep audio via stream copy.
 def _vf(c, suffix, vf):
     a = ["-i", c.src, "-vf", vf] + vcodec()
     a += ["-c:a", "copy"] if c.has_a else []
     return [job(a, c.out(suffix, ".mp4"), c.dur)]
 
 
+# Brightness / contrast / saturation / gamma via the eq filter.
 @op("Effects & Colour", "colour", "Colour correction (brightness, contrast…)",
     [O("b", "Brightness (-0.5 to 0.5)", "float", 0.05), O("c", "Contrast (0.5 to 2)", "float", 1.1),
      O("s", "Saturation (0 to 3)", "float", 1.2), O("g", "Gamma (0.5 to 2)", "float", 1.0)])
@@ -1205,6 +1382,7 @@ def b_colour(o, c):
     return _vf(c, "_graded", f"eq=brightness={o['b']}:contrast={o['c']}:saturation={o['s']}:gamma={o['g']}")
 
 
+# Apply a .cube 3D LUT (lut3d).
 @op("Effects & Colour", "lut", "Apply a LUT (.cube colour preset)", [O("lut", "LUT file (.cube)", "file", ftype="lut")])
 def b_lut(o, c):
     if not o["lut"]:
@@ -1212,26 +1390,31 @@ def b_lut(o, c):
     return _vf(c, "_lut", f"lut3d=file={esc_path(o['lut'])}")
 
 
+# Box blur.
 @op("Effects & Colour", "blur", "Blur", [O("amt", "Strength (1-30)", "int", 8)])
 def b_blur(o, c):
     return _vf(c, "_blur", f"boxblur={int(o['amt'])}:2")
 
 
+# Unsharp mask.
 @op("Effects & Colour", "sharpen", "Sharpen", [O("amt", "Strength (0.5-3)", "float", 1.0)])
 def b_sharpen(o, c):
     return _vf(c, "_sharp", f"unsharp=5:5:{o['amt']}:5:5:0")
 
 
+# hqdn3d video denoise.
 @op("Effects & Colour", "vdenoise", "Denoise video", [O("amt", "Strength (1-10)", "float", 4)])
 def b_vdenoise(o, c):
     return _vf(c, "_denoised", f"hqdn3d={o['amt']}:{o['amt']}:6:6")
 
 
+# Vignette filter.
 @op("Effects & Colour", "vignette", "Vignette (darkened corners)", [O("angle", "Strength (0.2-1.2, lower = stronger)", "float", 0.6)])
 def b_vignette(o, c):
     return _vf(c, "_vignette", f"vignette=angle=PI*{o['angle']}")
 
 
+# Chroma key: colorkey/chromakey over a solid colour or a chosen background image; similarity + edge softness options.
 @op("Effects & Colour", "chroma", "Remove green screen (chroma key)",
     [O("key", "Key colour", default="0x00ff00"), O("sim", "Similarity (0.05-0.4)", "float", 0.15), O("blend", "Edge softness (0-0.3)", "float", 0.1),
      O("bgimg", "Background image (optional)", "file", ftype="image"), O("bgcol", "…or background colour", default="black")],
@@ -1246,6 +1429,7 @@ def b_chroma(o, c):
     return [job(["-i", c.src] + bg + ["-filter_complex", fc, "-map", "[v]", "-map", "0:a?"] + vcodec() + AAC, c.out("_keyed", ".mp4"), c.dur)]
 
 
+# Fade picture and (optionally) sound in/out, to/from black or white.
 @op("Effects & Colour", "vfade", "Fade in / out (picture + sound)",
     [O("fin", "Fade in (seconds)", "float", 1), O("fout", "Fade out (seconds)", "float", 1),
      O("col", "Fade to / from", "choice", "black", ["black", "white"])])
@@ -1259,6 +1443,7 @@ def b_vfade(o, c):
     return [job(a + vcodec() + AAC, c.out("_fade", ".mp4"), c.dur)]
 
 
+# Black & white or sepia (colorchannelmixer).
 @op("Effects & Colour", "bw", "Black and white", [O("tone", "Look", "choice", "Black & white", ["Black & white", "Sepia"])])
 def b_bw(o, c):
     if o["tone"] == "Sepia":
@@ -1268,6 +1453,7 @@ def b_bw(o, c):
     return _vf(c, "_bw", vf)
 
 
+# Speed ramp: ONE filter_complex - trim into before / section / after, change the speed of the middle part (setpts + atempo), concat the three.
 @op("Effects & Colour", "ramp", "Speed ramp (slow down or speed up a section)",
     [O("s", "Section starts at (seconds)", "float", 1), O("e", "Section ends at (seconds)", "float", 3),
      O("f", "Speed in the section (0.25 = slow-mo, 3 = fast)", "float", 0.4)])
@@ -1286,6 +1472,7 @@ def b_ramp(o, c):
     return [job(["-i", c.src, "-filter_complex", fc] + maps + vcodec() + (AAC if c.has_a else []), c.out("_ramp", ".mp4"), c.dur)]
 
 
+# Deinterlace with yadif.
 @op("Effects & Colour", "deinterlace", "Deinterlace old footage")
 def b_deint(o, c):
     return _vf(c, "_deint", "yadif=mode=0")
@@ -1294,11 +1481,16 @@ def b_deint(o, c):
 CATEGORIES = ["Video", "Format & Quality", "Audio", "Combine", "Text & Subtitles", "Effects & Colour", "Images & Frames", "Analysis", "Streaming"]
 
 
+# --- 7. ENGINE ---------------------------------------------------------------
+#  Everything from here down to the settings section runs jobs. It is GUI-free,
+#  which is why --selftest can exercise it on a headless server.
 # --------------------------------------------------------------------------- engine
+# Default value of every option of a spec, keyed by option key (used for the dialogs and the self-test).
 def default_opts(spec):
     return {s["key"]: s["default"] for s in spec["opts"]}
 
 
+# Does this file suit the operation's kind? (e.g. audio ops accept audio files or videos with sound; image ops accept images.) Used to skip wrong files in batch mode.
 def kind_ok(spec, info, ext):
     k = spec["kind"]
     if k == "image":
@@ -1312,13 +1504,16 @@ def kind_ok(spec, info, ext):
     return info["has_v"] or info["has_a"]
 
 
+# Extensions that count for a kind - drives file-dialog filters and folder scanning.
 def kind_exts(kind):
     return {"video": VIDEO_EXT, "audio": AUDIO_EXT, "image": IMAGE_EXT, "sub": SUB_EXT}.get(kind, VIDEO_EXT | AUDIO_EXT)
 
 
+# Remembers the commands of the most recent file so 'Copy last command' works after a run.
 LAST_CMDS = []  # ffmpeg commands (copy-paste form) of the file most recently processed
 
 
+# Render a job as a full ffmpeg command line. clean=True returns the copy-and-paste friendly form (no -progress flags).
 def job_cmd(j, clean=False):
     """Full ffmpeg argument list for a job. clean=True gives the tidy copy-paste form."""
     if clean:
@@ -1331,6 +1526,11 @@ def job_cmd(j, clean=False):
     return cmd
 
 
+# Run ONE job. Two kinds:
+#    * func job  -> call j["func"](log) (pure Python, e.g. the full report)
+#    * ffmpeg job -> spawn ffmpeg with -progress pipe:1, parse out_time to drive
+#      the progress callback, honour `cancel` (kills the process), and return
+#      (ok, output_text). Output lines are forwarded to `log`.
 def run_job(j, log, progress, cancel, show_cmd=False):
     """Runs one job dict. Returns the process return code."""
     if j.get("func"):
@@ -1371,6 +1571,7 @@ def run_job(j, log, progress, cancel, show_cmd=False):
     return p.returncode
 
 
+# Paths of everything a job list will create (used for the self-test and 'open output folder').
 def output_paths(j):
     if j.get("tmpout"):
         return []
@@ -1379,6 +1580,11 @@ def output_paths(j):
     return [j["out"]] if j.get("out") else []
 
 
+# Run an operation over a list of files:
+#    for each file -> make a Ctx -> check kind_ok -> call the builder -> run each
+#    job. If a GPU (NVENC) run fails, retry once on the CPU and switch the GPU
+#    checkbox state off. Failures write the full command + output to the log.
+#    Returns (ok_count, fail_count, output_paths).
 def execute(spec, opts, files, outdir, log, progress, cancel, show_cmd=False):
     """Run spec on every file. Returns (ok_count, fail_count, outputs)."""
     ok = fail = 0
@@ -1447,6 +1653,7 @@ def execute(spec, opts, files, outdir, log, progress, cancel, show_cmd=False):
     return ok, fail, outputs
 
 
+# Turn the dialog's raw string values into typed values (int/float/bool/file lists). Raises ValueError for a bad number, which the GUI shows as 'One of the numbers isn't valid.'
 def convert_opts(spec, raw):
     out = {}
     for s in spec["opts"]:
@@ -1467,13 +1674,17 @@ def convert_opts(spec, raw):
 
 
 # --------------------------------------------------------------------------- settings
+# --- 8. COPY-COMMAND / LIVE PREVIEW / QUEUE ---------------------------------
+#  GUI-independent pieces that the dialog windows lean on.
 # --------------------------------------------------------------------------- copy command / preview / queue (engine)
+# Format seconds as MMM:SS:mmm - the same format tsec() parses back, so sliders and text boxes round-trip.
 def fmt_ms(t):
     """Seconds -> 'MMM:SS:mmm' (minutes:seconds:milliseconds), the format the time boxes use."""
     ms = max(0, int(round(float(t) * 1000)))
     return f"{ms // 60000:03d}:{ms // 1000 % 60:02d}:{ms % 1000:03d}"
 
 
+# Tiny, safe arithmetic evaluator (parses with ast, never eval()) for ffmpeg size expressions like min(iw,ih) or (iw-ow)/2, so the crop sliders can show real numbers.
 def eval_expr(txt, env):
     """Evaluate a simple ffmpeg size expression like 'min(iw,ih)' or '(iw-ow)/2'. Returns a float, or None if it can't."""
     import ast
@@ -1504,6 +1715,7 @@ def eval_expr(txt, env):
 # Options that get a slider in their window: (operation id, option key) -> (kind, low, high)
 # kinds: pos = a time inside the clip (high = clip length), posend = same but far right means "to the end" (blank),
 #        len = a length in seconds, num = a plain number, cw/ch/cx/cy = crop width/height/x/y in pixels
+# Which options get a slider in which operation, and what kind: pos/posend (time), len (duration), num/inum (numbers), cw/ch/cx/cy (crop box). Min/max can be expressions of the video's duration/width/height.
 SLIDERS = {
     ("trim", "start"): ("pos", 0, None), ("trim", "end"): ("posend", 0, None),
     ("atrim", "start"): ("pos", 0, None), ("atrim", "end"): ("posend", 0, None),
@@ -1523,10 +1735,12 @@ SLIDERS = {
 }
 
 
+# Look an operation up by id (queue items store ids, not functions).
 def find_op(op_id):
     return next((s for s in OPS if s["id"] == op_id), None)
 
 
+# Build the printable ffmpeg commands for a spec + options + file, without running anything ('Copy ffmpeg command' button).
 def format_commands(spec, opts, f, outdir=None):
     """The ffmpeg command line(s) an operation would run on file f, as text to paste into a terminal. Runs nothing."""
     tmp = tempfile.mkdtemp(prefix="ffstudio_")
@@ -1545,6 +1759,7 @@ def format_commands(spec, opts, f, outdir=None):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Grab one frame as PNG at time t with an optional filter, scaled to fit a box - the basis of every preview.
 def grab_frame(path, t, out_png, vf="", box=(420, 240)):
     """Save one frame at time t (seconds) as a PNG scaled to fit inside box (box=None: full size). Returns True on success."""
     parts = [vf] if vf else []
@@ -1561,10 +1776,12 @@ def grab_frame(path, t, out_png, vf="", box=(420, 240)):
     return r.returncode == 0 and os.path.exists(out_png) and os.path.getsize(out_png) > 0
 
 
+# Encoder-only ffmpeg flags (codec, CRF, preset...) that preview_frame removes from a job's arguments so a single-frame preview can be produced from the same command.
 _STRIP1 = {"-c:v", "-crf", "-preset", "-pix_fmt", "-profile:v", "-c:a", "-b:a", "-ar", "-ac", "-movflags", "-b:v", "-maxrate",
            "-bufsize", "-cq", "-rc", "-tune", "-level", "-c", "-codec", "-acodec", "-vcodec", "-b:a:0"}
 
 
+# Read width/height straight from a PNG header (no imaging library needed).
 def png_size(path):
     """(width, height) of a PNG file, or (0, 0)."""
     try:
@@ -1577,6 +1794,7 @@ def png_size(path):
     return 0, 0
 
 
+# Render the 'after' picture for the live preview using the same filter the real job would use.
 def preview_frame(spec, opts, src, t, out_png):
     """Render ONE frame of what an operation would do (its real filters, no encoding) to a PNG. True on success."""
     tmp = tempfile.mkdtemp(prefix="ffprev_")
@@ -1607,6 +1825,7 @@ def preview_frame(spec, opts, src, t, out_png):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Turn the chosen path (file / folder / multi-selection) into the actual list of files for this operation, honouring folder_one and kind filters.
 def resolve_files(spec, opts, path, multi=None):
     """Work out which files an operation runs on. Returns (files, opts, error_message_or_None)."""
     needs_extra = any(s["type"] in ("file", "files") for s in spec["opts"])
@@ -1637,6 +1856,7 @@ def resolve_files(spec, opts, path, multi=None):
     return files, opts, None
 
 
+# Run queued items one after another through execute(); returns total ok / fail counts.
 def run_queue(items, log, progress, cancel, show_cmd=False):
     """items: list of dicts {spec, opts, files, outdir}. Runs them one after another. Returns (ok, fail, outputs)."""
     ok = fail = 0
@@ -1655,6 +1875,10 @@ def run_queue(items, log, progress, cancel, show_cmd=False):
     return ok, fail, outs
 
 
+# --- 9. SETTINGS & STARTUP SOUND -------------------------------------------
+#  ~/.om_video_studio.json keeps: theme, language, font size, recent files,
+#  favourites, last-used option values, GPU/sound switches. Both functions
+#  swallow errors - settings must never stop the app starting.
 def load_settings():
     try:
         return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
@@ -1669,6 +1893,7 @@ def save_settings(d):
         pass
 
 
+# Optional start-up jingle bundled in Resource/. play_startup_sound plays it asynchronously on Windows via winsound / MCI; silently does nothing elsewhere.
 STARTUP_SOUND = RES_DIR / "Resource" / "Whips _the_Llama_Ass.mp3"
 
 
@@ -1722,14 +1947,24 @@ def play_startup_sound():
         write_log(f"Startup sound failed: {e!r}")
 
 
+# --- 10. LANGUAGES ----------------------------------------------------------
+#  English strings in the code ARE the translation keys. om_translations.py
+#  supplies LANGS (code -> native name) and TR (code -> {english: translated}).
+#  tr(s) looks a string up in the current language and returns s unchanged if
+#  missing, so a missing translation can never crash the UI. Templates containing
+#  {} (e.g. "Running: {}") are matched by pattern so dynamic text still translates.
+#  The language is applied at start-up (gui() patches ttk/tk widgets so every
+#  text= is passed through tr); changing language asks for a restart.
 # --------------------------------------------------------------------------- languages
 try:
     from om_translations import LANGS, TR  # language names + {code: {english text: translation}}
 except Exception:  # noqa: BLE001 - the app still works (in English) without the translation file
     LANGS, TR = {"en": "English"}, {}
+# Current language state: code and compiled template patterns.
 LANG = {"code": "en", "templ": []}
 
 
+# Select a language and precompile its {} templates.
 def set_lang(code):
     LANG["code"] = code if code in LANGS else "en"
     tbl = TR.get(LANG["code"], {})
@@ -1737,6 +1972,7 @@ def set_lang(code):
     LANG["templ"] = [(re.compile("^" + re.escape(k).replace(r"\{\}", "(.+?)") + "$", re.S), v) for k, v in tbl.items() if "{}" in k]
 
 
+# Translate one string (handles category labels with an icon prefix and multi-line labels).
 def tr(s):
     """Translate an English UI text into the chosen language (unknown texts stay English)."""
     if not isinstance(s, str) or LANG["code"] == "en" or not s.strip():
@@ -1759,7 +1995,13 @@ def tr(s):
     return s
 
 
+# --- 11. COMPLETION PINGS -----------------------------------------------------
+#  Three short tone patterns are synthesised with the wave module (no audio
+#  files shipped): SOUNDS['job'] single job, ['batch'] several files/queue,
+#  ['error'] something failed. Written once to the temp folder, played
+#  asynchronously with winsound. The 'Sound' checkbox switches them off.
 # --------------------------------------------------------------------------- completion sounds
+# Synthesise a WAV of sine notes with a small fade to avoid clicks.
 def _tone_wav(path, notes, rate=44100):
     """Write a small mono 16-bit wav of bell-like notes. notes = [(freq_hz, start_s, length_s, volume 0-1)]."""
     import math, struct, wave
@@ -1785,6 +2027,7 @@ def _tone_wav(path, notes, rate=44100):
 
 # kind -> notes. "job" = one job finished (short two-note ping), "batch" = queue / many files finished
 # (a different, longer rising chime), "error" = something failed (low, falling).
+# The three ping melodies (note frequency, length).
 SOUNDS = {
     "job": [(1319, 0.00, 0.22, 0.8), (1760, 0.11, 0.30, 0.9)],
     "batch": [(523, 0.00, 0.35, 0.8), (659, 0.16, 0.35, 0.8), (784, 0.32, 0.35, 0.8), (1047, 0.48, 0.70, 0.95)],
@@ -1792,6 +2035,7 @@ SOUNDS = {
 }
 
 
+# Make the WAV for a ping kind on first use and return its path.
 def sound_file(kind):
     p = Path(tempfile.gettempdir()) / f"om_video_studio_{kind}.wav"
     if not p.exists():
@@ -1799,6 +2043,7 @@ def sound_file(kind):
     return p
 
 
+# Fire-and-forget playback (Windows only; ignored elsewhere or on error).
 def play_ping(kind):
     """Play a completion sound (Windows: winsound, asynchronous). Off when the settings file has "sounds": false."""
     try:
@@ -1814,10 +2059,12 @@ def play_ping(kind):
     return False
 
 
+# Choose which ping: error if any failure, batch if more than one file/queue, else single-job.
 def ping_kind(ok, fail, batch):
     return "error" if fail and not ok else ("batch" if batch else "job")
 
 
+# Checks that this ffmpeg lists h264_nvenc AND can actually encode a tiny test clip with it, so the GPU checkbox is only enabled when it will really work.
 def detect_gpu():
     try:
         r = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, encoding="utf-8",
@@ -1832,10 +2079,25 @@ def detect_gpu():
         return False
 
 
+# --- 12. GUI ------------------------------------------------------------------
+#  The entire interface lives inside gui(). Widgets and handlers are closures
+#  sharing local state, which keeps the module namespace clean and lets the file
+#  stay a single script. Reading order inside gui():
+#     a. imports, translation patching, theme/fonts/styles
+#     b. worker<->GUI queue and pump()
+#     c. header (theme toggle, language)
+#     d. Input card + info strip
+#     e. bottom bar (Cancel, Open folder, Queue, Copy, GPU, Sound, A+/A-, log)
+#     f. sidebar categories + button grids (+ Favourites)
+#     g. open_dialog(): per-operation option window (+ sliders + live preview)
+#     h. run / queue / copy-command logic
+#     i. ffmpeg install offer, update check, start-up
 # --------------------------------------------------------------------------- GUI
+# Emoji icon for each category tab (the text before the label in the sidebar).
 CAT_ICONS = {"Favourites": "★", "Video": "\U0001F3AC", "Format & Quality": "\U0001F527", "Audio": "\U0001F3B5", "Combine": "\U0001F9E9",
              "Text & Subtitles": "\U0001F4AC", "Effects & Colour": "\U0001F3A8", "Images & Frames": "\U0001F5BC", "Analysis": "\U0001F50D",
              "Streaming": "\U0001F4E1"}
+# Light and dark colour sets; BRAND_* are the accent colours used for headers and the primary button.
 PALETTE = {
     "light": dict(bg="#fafafa", fg="#1a1a1a", muted="#666666", log_bg="#ffffff", log_fg="#202020", sel="#cfe3ff"),
     "dark": dict(bg="#1c1c1c", fg="#f0f0f0", muted="#a6a6a6", log_bg="#141414", log_fg="#e6e6e6", sel="#33507a"),
@@ -1843,6 +2105,7 @@ PALETTE = {
 BRAND_BG, BRAND_FG, BRAND_GOLD = "#0f2a47", "#ffffff", "#f2c14e"
 
 
+# First line of `ffmpeg -version`, shown in the status line.
 def ff_version():
     try:
         r = subprocess.run([FFMPEG, "-version"], capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
@@ -1852,6 +2115,7 @@ def ff_version():
         return ""
 
 
+# Build and run the whole window. Returns when the window closes.
 def gui():
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -1933,6 +2197,7 @@ def gui():
     f_mono = tkfont.Font(family="Consolas", size=fsize["v"] - 1)
     f_title = tkfont.Font(family="Segoe UI", size=fsize["v"] + 9, weight="normal")
     f_brand = tkfont.Font(family="Segoe UI", size=fsize["v"] + 2, weight="normal")
+    # Report Tk callback exceptions to the log and a message box instead of failing silently.
     def _tk_error(et, ev, tb):
         import traceback
         write_log("GUI ERROR\n" + "".join(traceback.format_exception(et, ev, tb)))
@@ -1942,9 +2207,11 @@ def gui():
     wrapped, themed_text, themed_canvas = [], [], []
     state = {"running": False, "outputs": [], "outdir": None, "theme": theme, "multi": None, "multi_label": "", "queue": []}
 
+    # Current palette (light or dark).
     def pal():
         return PALETTE[state["theme"]]
 
+    # Scale all named fonts from the A+/A- size setting.
     def apply_fonts():
         n = fsize["v"]
         for f_, extra in ((f_base, 0), (f_bold, 0), (f_head, 3), (f_mono, -1), (f_title, 9), (f_brand, 2)):
@@ -1961,6 +2228,7 @@ def gui():
             except tk.TclError:
                 pass
 
+    # Configure ttk styles (cards, buttons, tabs) from the palette.
     def apply_styles():
         p = pal()
         apply_fonts()
@@ -1992,6 +2260,7 @@ def gui():
         for lbl in wrapped:
             lbl.configure(wraplength=max(500, 62 * fsize["v"]))
 
+    # Dark/light native title bar on Windows 10/11 via pywinstyles (best effort).
     def title_bar():
         if os.name != "nt":
             return
@@ -2004,12 +2273,14 @@ def gui():
     apply_styles()
     run_style = "Accent.TButton" if sv_ttk else "Run.TButton"
 
+    # A+/A- buttons: change font size and persist it.
     def set_fsize(delta):
         fsize["v"] = max(10, min(22, fsize["v"] + delta))
         apply_styles()
         settings["fsize"] = fsize["v"]
         save_settings(settings)
 
+    # Switch light/dark (sv_ttk) and re-apply styles and title bar.
     def toggle_theme():
         if not sv_ttk:
             return
@@ -2050,6 +2321,7 @@ def gui():
     lang_box = ttk.Combobox(hr, textvariable=lang_var, values=list(LANGS.values()), state="readonly", width=16)
     lang_box.pack(anchor="e", pady=(6, 0))
 
+    # Language combobox handler: save the choice and offer to restart so every widget picks it up.
     def on_lang(_e=None):
         code = next((c for c, n in LANGS.items() if n == lang_var.get()), "en")
         if code == LANG["code"]:
@@ -2076,6 +2348,7 @@ def gui():
     ent = ttk.Entry(card, textvariable=path_var)
     ent.grid(row=0, column=1, sticky="ew", padx=8)
 
+    # Set the main Input path and refresh the info strip and recents.
     def set_path(p):
         state["multi"] = None
         path_var.set(p)
@@ -2086,6 +2359,7 @@ def gui():
             recent["values"] = settings["recent"]
             save_settings(settings)
 
+    # Hold a multi-file selection (several files chosen at once).
     def set_multi(files):
         files = [os.path.normpath(f) for f in files]
         state["multi"] = files
@@ -2093,9 +2367,11 @@ def gui():
         path_var.set(state["multi_label"])
         info_var.set(f"Batch of {len(files)} files. Pick an operation to run it on all of them (or add it to the queue).")
 
+    # Return the multi-selection if it is still valid.
     def current_multi():
         return state["multi"] if state["multi"] and path_var.get() == state["multi_label"] else None
 
+    # 'Browse files...' dialog (multi-select).
     def browse_file():
         ft = [("Media files", " ".join("*" + e for e in sorted(VIDEO_EXT | AUDIO_EXT | IMAGE_EXT | SUB_EXT))), ("All files", "*.*")]
         ps = filedialog.askopenfilenames(title="Choose one or more files", filetypes=ft, initialdir=settings.get("lastdir") or None)
@@ -2106,6 +2382,7 @@ def gui():
             else:
                 set_path(os.path.normpath(ps[0]))
 
+    # 'Batch folder...' dialog.
     def browse_folder():
         p = filedialog.askdirectory(title="Choose a folder (batch)", initialdir=settings.get("lastdir") or None)
         if p:
@@ -2121,6 +2398,7 @@ def gui():
     ttk.Label(card, text="Save in:").grid(row=2, column=0, sticky="w", pady=(6, 0))
     ttk.Entry(card, textvariable=out_var).grid(row=2, column=1, sticky="ew", padx=8, pady=(6, 0))
 
+    # 'Choose...' for a custom output folder; empty = same folder as the source.
     def browse_out():
         p = filedialog.askdirectory(title="Output folder")
         if p:
@@ -2136,6 +2414,7 @@ def gui():
     ttk.Label(card, text=hint, style="Muted.TLabel").grid(row=4, column=0, columnspan=4, sticky="w")
     ent.bind("<Return>", lambda e: refresh_info())
 
+    # Probe the current input in a worker thread and show its one-line summary.
     def refresh_info():
         if current_multi():
             return
@@ -2176,6 +2455,7 @@ def gui():
         ttk.Checkbutton(row, text="Use GPU (NVENC)", variable=gpu_var, command=lambda: STATE.update(gpu=gpu_var.get())).pack(side="left")
     snd_var = tk.BooleanVar(value=settings.get("sounds", True))
 
+    # Sound checkbox: persist setting and play a sample ping when switched on.
     def toggle_sound():
         settings["sounds"] = snd_var.get()
         save_settings(settings)
@@ -2196,6 +2476,7 @@ def gui():
     body.rowconfigure(0, weight=1)
     scrollers = {}
 
+    # Create a canvas-based vertically scrolling frame (used by category pages and long dialogs).
     def make_scroll(parent, fit_width=False):
         """A frame that gets a vertical scroll bar (only when needed) and mouse-wheel scrolling."""
         outer = ttk.Frame(parent)
@@ -2226,6 +2507,7 @@ def gui():
         scrollers[outer] = (cv, inner)
         return outer, inner
 
+    # Mouse-wheel routing to whichever scroll area is under the pointer.
     def on_wheel(e):
         try:
             w = root.winfo_containing(e.x_root, e.y_root)
@@ -2252,6 +2534,7 @@ def gui():
     cat_var = tk.StringVar(value=settings.get("cat", "Video") if settings.get("cat") in CATEGORIES + ["Favourites"] else "Video")
     ops_by_id = {o["id"]: o for o in OPS}
 
+    # Lay operation buttons out in a responsive grid.
     def fill_buttons(fr, ops, start_row=1):
         for i, spec in enumerate(ops):
             b = ttk.Button(fr, text=spec["label"].replace(" (", "\n("), style="Op.TButton", command=lambda s=spec: open_dialog(s))
@@ -2261,6 +2544,7 @@ def gui():
         for rw in range((len(ops) + 2) // 3):
             fr.rowconfigure(start_row + rw, uniform="rows", minsize=78)
 
+    # Build one category page (its button grid and description).
     def build_cat(cat):
         if cat not in cat_frames:
             outer_, inner_ = make_scroll(content)
@@ -2280,6 +2564,7 @@ def gui():
             fill_buttons(fr, ops)
         register_drop_tree(fr)
 
+    # Switch the visible category page.
     def show_cat():
         settings["cat"] = cat_var.get()
         save_settings(settings)
@@ -2287,6 +2572,7 @@ def gui():
         if fr is not None:
             fr.tkraise()
 
+    # Drag-and-drop a file/folder onto the window (tkinterdnd2).
     def on_drop(event):
         try:
             files = root.tk.splitlist(event.data)
@@ -2300,6 +2586,7 @@ def gui():
                 if len(files) > 1:
                     log(f"You dropped {len(files)} items including a folder; using the first. Drop several files together to batch them.")
 
+    # Make every child widget a drop target too.
     def register_drop_tree(w):
         if not dnd:
             return
@@ -2315,9 +2602,11 @@ def gui():
         ttk.Radiobutton(side, text=f"{CAT_ICONS.get(cat, '')}  {cat}", variable=cat_var, value=cat, style="Side.Toolbutton",
                         width=22, command=show_cat).pack(fill="x", pady=2)
     # ------------------------------------------------------------------ helpers used by dialogs / worker
+    # Append a line to the log box (always called on the GUI thread via the queue).
     def log(msg):
         q.put(("log", msg))
 
+    # 'Open output folder' button (Explorer / xdg-open / open).
     def open_folder():
         d = state["outdir"]
         if d and os.path.isdir(d):
@@ -2326,6 +2615,11 @@ def gui():
             else:
                 subprocess.Popen(["xdg-open", d])
 
+    # Heart of thread safety: worker threads never touch Tk. They put tuples on the
+    #  queue `q` - ('log', text), ('prog', fraction), ('info', text), ('call', fn),
+    #  ('done', ok, fail) - and pump() drains it every 100 ms on the GUI thread.
+    #  The 'done' branch re-enables buttons, plays the completion ping and updates
+    #  the status line.
     def pump():
         try:
             while True:
@@ -2363,12 +2657,19 @@ def gui():
             pass
         root.after(100, pump)
 
+    # Map an option's ftype to the file-dialog filter list.
     def ft_for(t):
         ex = {"audio": AUDIO_EXT | VIDEO_EXT, "image": IMAGE_EXT, "video": VIDEO_EXT, "sub": SUB_EXT, "lut": {".cube", ".3dl"},
               "media": VIDEO_EXT | AUDIO_EXT | IMAGE_EXT}.get(t)
         return ([("Files", " ".join("*" + e for e in sorted(ex))), ("All files", "*.*")] if ex else [("All files", "*.*")])
 
     # ------------------------------------------------------------------ option dialog
+    # The per-operation window: builds one widget per option in spec['opts'] (entry,
+    #  spinbox-like int/float, checkbox, combobox, file picker, multi-file list),
+    #  adds sliders where SLIDERS defines them, a tip line, the Favourite star, and
+    #  the buttons: Copy ffmpeg command / Add to queue / Run. `collect()` reads the
+    #  widgets back into a raw dict; `go(mode)` validates, then runs, queues or
+    #  copies. Last-used values are remembered per operation.
     def open_dialog(spec):
         top_ = tk.Toplevel(root)
         top_.title(spec["label"])
@@ -2526,6 +2827,7 @@ def gui():
         except Exception:  # noqa: BLE001
             pass
 
+    # Validate input, convert options, resolve files and output folder; returns a 'prep' bundle or shows a message box and returns None.
     def prepare(spec, opts, parent=None):
         """Validate input and work out the files. Returns (files, opts, outdir) or None (after telling the user)."""
         if not have_ff:
@@ -2541,6 +2843,7 @@ def gui():
             os.makedirs(outdir, exist_ok=True)
         return files, opts2, outdir
 
+    # Disable buttons, reset progress and remember whether this run is a batch (decides which ping plays).
     def begin_run(label, batch=False):
         state.update(running=True, outputs=[], batch=batch)
         cancel.clear()
@@ -2549,6 +2852,7 @@ def gui():
         bar["value"] = 0
         status_var.set(f"Running: {label}")
 
+    # Run one operation on a worker thread. Refuses if a job is already running.
     def start(spec, prep):
         files, opts, outdir = prep
         begin_run(spec["label"])
@@ -2560,6 +2864,7 @@ def gui():
         threading.Thread(target=work, daemon=True).start()
 
     # ------------------------------------------------------------------ copy command
+    # Clipboard helper with a friendly fallback message.
     def copy_text(text, what):
         try:
             root.clipboard_clear()
@@ -2569,6 +2874,7 @@ def gui():
         except tk.TclError:
             messagebox.showinfo(APP, "Couldn't reach the clipboard. The command is in the log below instead.")
 
+    # 'Copy last command' button.
     def copy_last():
         if not LAST_CMDS:
             messagebox.showinfo(APP, "Nothing to copy yet - run something first (or use 'Copy ffmpeg command' in an operation's window).")
@@ -2578,6 +2884,7 @@ def gui():
     # ------------------------------------------------------------------ job queue
     qwin = {"w": None, "refresh": None}
 
+    # Update the 'Queue (n)' button label.
     def refresh_queue_btn():
         queue_btn.configure(text=f"Queue ({len(state['queue'])})")
         if qwin["refresh"]:
@@ -2586,6 +2893,7 @@ def gui():
             except tk.TclError:
                 pass
 
+    # Add the prepared operation to the queue (stored by op id + options + files).
     def enqueue(spec, prep):
         files, opts, outdir = prep
         state["queue"].append(dict(spec=spec, opts=opts, files=files, outdir=outdir))
@@ -2594,6 +2902,7 @@ def gui():
         status_var.set(msg)
         log(msg)
 
+    # Run the whole queue on a worker thread.
     def run_queue_gui():
         if state["running"]:
             messagebox.showinfo(APP, "A job is already running. Start the queue when it finishes.")
@@ -2611,6 +2920,7 @@ def gui():
             q.put(("done", res))
         threading.Thread(target=work, daemon=True).start()
 
+    # Queue window: list, move up/down, remove, clear, run.
     def open_queue():
         if qwin["w"] is not None:
             try:
@@ -2691,6 +3001,7 @@ def gui():
         fill()
 
     # ------------------------------------------------------------------ live preview (trim / crop)
+    # Which file the live preview should read (first of the selection / folder).
     def preview_source():
         try:
             src = (current_multi() or [path_var.get().strip().strip('"')])[0]
@@ -2701,6 +3012,10 @@ def gui():
         except Exception:  # noqa: BLE001
             return ""
 
+    # Create one slider bound to a text box. The two stay in sync in both directions
+    #  (typing moves the slider, dragging rewrites the text) with a lock flag to stop
+    #  feedback loops; +/- nudge buttons give fine control. Kinds are described at
+    #  SLIDERS above.
     def add_slider(frm, row, var, cfg, meta, tkvars, is_int=False):
         """A slider kept in step with a text box. cfg = (kind, low, high); meta = clip duration / size. Returns False if not usable."""
         kind, lo, hi = cfg
@@ -2818,6 +3133,11 @@ def gui():
         from_var()
         return True
 
+    # Live preview panel inside the dialog: fixed-size picture holders (so the window
+    #  never jumps), 600 ms debounce after any change, then a worker renders frames
+    #  with grab_frame/preview_frame. Shows Before/After pairs for most filters,
+    #  start/end frames for Trim, and the cropped result for Crop. Images are
+    #  subsampled with tk PhotoImage to fit.
     def attach_preview(top_, frm, spec, getters, tkvars, nrows):
         def cur_src(raw=None):
             src_ = preview_source()
@@ -2949,6 +3269,7 @@ def gui():
     for cat in ["Favourites"] + CATEGORIES:
         build_cat(cat)
     show_cat()
+    # If ffmpeg/ffprobe are missing, ask the user and run install_ffmpeg in the background, then restart the app.
     def offer_ffmpeg_install():
         if os.name != "nt":
             messagebox.showwarning(APP, "ffmpeg / ffprobe were not found on PATH. Install ffmpeg with your package manager, then restart.")
@@ -3006,6 +3327,7 @@ def gui():
     if not have_ff:
         refresh_info()
         root.after(300, offer_ffmpeg_install)
+    # Background thread asks GitHub's releases API for the latest tag; if newer than VERSION, shows a clickable notice. Silent on any network error.
     def check_update():
         """Ask GitHub for the latest release (background thread); prompt only if a newer one exists."""
         def work():
@@ -3035,7 +3357,14 @@ def gui():
     root.mainloop()
 
 
+# --- 13. SELF-TEST & COMMAND-LINE ------------------------------------------
+#  `python om_video_studio.py --selftest [ids] [--full] [--gpu]`
+#    generates a tiny test clip/audio/image/subtitle/LUT with ffmpeg, then runs
+#    every (or the listed) operation through execute() and reports PASSED /
+#    FAILED / SKIPPED. CI runs `--selftest trim,split,convert,compress,extract,
+#    thumb,extras` before building the installer; 'extras' = selftest_extras().
 # --------------------------------------------------------------------------- self-test
+# Non-ffmpeg checks: translations cover every op/option/category, tr() behaviour, ping sounds are distinct, full-report file naming/contents, settings helpers etc. Each check() prints OK/FAIL.
 def selftest_extras():
     """Tests for copy-command, preview frames, file resolving and the job queue."""
     if not refresh_tools():
@@ -3209,6 +3538,7 @@ def selftest_extras():
     return 1 if fails else 0
 
 
+# Runs the operations (see banner above).
 def selftest():
     wanted = [x for a_ in sys.argv[2:] if not a_.startswith("--") for x in a_.split(",") if x]
     if "extras" in wanted:
@@ -3285,6 +3615,7 @@ def selftest():
     return 1 if failed else 0
 
 
+# Entry point: --selftest runs tests, --list prints operations, otherwise open the GUI.
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(selftest())
