@@ -9,3 +9,5 @@ All three have a British English voiceover and no captions.
 | [03-full-walkthrough-hd.mp4](03-full-walkthrough-hd.mp4) | Landscape 1920x1080 | 5 min 10 s | **Full walkthrough, recorded at native HD.** Tours the 69 operations across the 9 categories (video, format, audio, combine, text, effects, images, analysis, streaming), with real runs of Trim, Speed, Resize, Crop, Rotate, Flip, Aspect ratio, Stabilise and HLS. |
 
 Video files are best downloaded and played locally; GitHub may not stream them inline.
+
+- `04-whats-new-mobile.mp4` - portrait (1080x1920, 2m45s): everything added since 1.1.0 (alert, sliders, live preview, copy command, queue, resize, join list, social export, 13 languages, file report, sound).
