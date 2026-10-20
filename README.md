@@ -50,7 +50,7 @@ Prefer no installer? Download `OM-Video-Studio-Portable.zip`, unzip anywhere and
 3. The app is not signed with an Apple Developer ID, so the first time macOS will say it cannot be opened. **Right-click (or Control-click) the app > Open > Open.** If it still refuses, run this once in Terminal: `xattr -dr com.apple.quarantine /Applications/OM-Video-Studio.app`
 4. ffmpeg is not bundled. If it is missing the app tells you and copies the command: install [Homebrew](https://brew.sh), then run `brew install ffmpeg`, and restart the app.
 
-Testing the Mac version? A step-by-step guide with a tick chart is in [docs/OM_Video_Studio_Mac_Tester_Guide.pdf](docs/OM_Video_Studio_Mac_Tester_Guide.pdf) (also [.docx](docs/OM_Video_Studio_Mac_Tester_Guide.docx)). Developer notes: [script brief](docs/SCRIPT_OVERVIEW.md) and [project overview](docs/PROJECT_OVERVIEW.md).
+Test files (two short clips and a photo, copyright-free) are in [docs/test-media](docs/test-media). Testing the Mac version? A step-by-step guide with a tick chart is in [docs/OM_Video_Studio_Mac_Tester_Guide.pdf](docs/OM_Video_Studio_Mac_Tester_Guide.pdf) (also [.docx](docs/OM_Video_Studio_Mac_Tester_Guide.docx)). Developer notes: [script brief](docs/SCRIPT_OVERVIEW.md) and [project overview](docs/PROJECT_OVERVIEW.md).
 
 Mac notes: the GPU checkbox stays off (NVENC is NVIDIA-only), and Windows-only touches (title-bar colour) are skipped. Please report anything odd - include the log file at `~/Library/Application Support/O.M. Video Studio/om_video_studio_log.txt`.
 
