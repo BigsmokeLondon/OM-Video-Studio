@@ -118,14 +118,6 @@ jobs:
           cat Output/selftest-${{ matrix.arch }}.txt
           exit $RC
 
-      - name: Publish diagnostics to a ci-logs branch
-        if: always()
-        continue-on-error: true
-        run: |
-          mkdir -p diag && cp Output/*.txt Output/*.png diag/ 2>/dev/null || true
-          cd diag && git init -q && git remote add o "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}"
-          git add -A && git -c user.name=ci -c user.email=ci@example.com commit -qm "diagnostics ${{ matrix.arch }}" && git push -qf o HEAD:refs/heads/ci-logs-${{ matrix.arch }}
-
       - name: Make the macOS icon from app.ico
         run: |
           python - <<'PY'
@@ -171,6 +163,14 @@ jobs:
           screencapture -x Output/screenshot-${{ matrix.arch }}.png || true
           pkill -f OM-Video-Studio || true
           cat "$HOME/Library/Application Support/O.M. Video Studio/om_video_studio_log.txt" > Output/app-log-${{ matrix.arch }}.txt 2>/dev/null || true
+
+      - name: Publish diagnostics (with screenshot) to a ci-logs branch
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p diag && cp Output/*.txt Output/*.png diag/ 2>/dev/null || true
+          cd diag && git init -q && git remote add o "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}"
+          git add -A && git -c user.name=ci -c user.email=ci@example.com commit -qm "diagnostics ${{ matrix.arch }}" && git push -qf o HEAD:refs/heads/ci-logs-${{ matrix.arch }}
 
       - uses: actions/upload-artifact@v4
         if: always()
