@@ -106,7 +106,12 @@ jobs:
           brew install ffmpeg
 
       - name: Quick self-test of the engine
-        run: python om_video_studio.py --selftest trim,split,convert,compress,extract,thumb,extras
+        timeout-minutes: 8
+        run: |
+          mkdir -p Output
+          # faulthandler prints where Python is stuck and exits if the test runs longer than 4 minutes
+          python -u -c "import faulthandler,runpy,sys; faulthandler.dump_traceback_later(240, exit=True); sys.argv=['om_video_studio.py','--selftest','trim,split,convert,compress,extract,thumb,extras']; runpy.run_path('om_video_studio.py', run_name='__main__')" 2>&1 | tee Output/selftest-${{ matrix.arch }}.txt
+          test ${PIPESTATUS[0]} -eq 0
 
       - name: Make the macOS icon from app.ico
         run: |
@@ -155,6 +160,7 @@ jobs:
           cat "$HOME/Library/Application Support/O.M. Video Studio/om_video_studio_log.txt" > Output/app-log-${{ matrix.arch }}.txt 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: OM-Video-Studio-macOS-${{ matrix.arch }}
           path: Output/*
