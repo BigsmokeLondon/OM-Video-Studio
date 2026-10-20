@@ -70,3 +70,97 @@ jobs:
             Output/OM-Video-Studio-Setup.exe
             Output/OM-Video-Studio-Portable.zip
           generate_release_notes: true
+
+  # ---------------------------------------------------------------------------
+  # macOS (experimental): builds an unsigned .app, zips it and adds it to the release the Windows job just published.
+  # Apple Silicon (macos-latest) and Intel (macos-15-intel). The Intel job may fail without blocking anything.
+  # ---------------------------------------------------------------------------
+  macos:
+    needs: build
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.arch == 'intel' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+          - os: macos-15-intel
+            arch: intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Work out version
+        run: |
+          V=$(grep -E '^VERSION = ' om_video_studio.py | sed -E 's/VERSION = "(.+)"/\1/')
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller pillow
+          brew install ffmpeg
+
+      - name: Quick self-test of the engine
+        run: python om_video_studio.py --selftest trim,split,convert,compress,extract,thumb,extras
+
+      - name: Make the macOS icon from app.ico
+        run: |
+          python - <<'PY'
+          from PIL import Image
+          import os
+          im = Image.open("app.ico")
+          try:
+              im.size = max(im.info.get("sizes", {(256, 256)}))
+          except Exception:
+              pass
+          im = im.convert("RGBA")
+          os.makedirs("app.iconset", exist_ok=True)
+          for s in (16, 32, 64, 128, 256, 512):
+              im.resize((s, s), Image.LANCZOS).save(f"app.iconset/_{s}.png")
+          names = {"icon_16x16.png": 16, "icon_16x16@2x.png": 32, "icon_32x32.png": 32, "icon_32x32@2x.png": 64,
+                   "icon_128x128.png": 128, "icon_128x128@2x.png": 256, "icon_256x256.png": 256, "icon_256x256@2x.png": 512,
+                   "icon_512x512.png": 512}
+          for n, s in names.items():
+              Image.open(f"app.iconset/_{s}.png").save(f"app.iconset/{n}")
+          PY
+          iconutil -c icns app.iconset -o app.icns
+
+      - name: Build app with PyInstaller
+        run: >
+          python -m PyInstaller --noconfirm --clean --windowed --name OM-Video-Studio --icon app.icns
+          --osx-bundle-identifier com.maindustries.omvideostudio
+          --add-data "app.ico:." --add-data "Resource:Resource"
+          --collect-all sv_ttk --collect-all tkinterdnd2 --collect-all certifi --hidden-import om_translations om_video_studio.py
+
+      - name: Stamp version and ad-hoc sign
+        run: |
+          plutil -replace CFBundleShortVersionString -string "$VERSION" dist/OM-Video-Studio.app/Contents/Info.plist
+          plutil -replace CFBundleVersion -string "$VERSION" dist/OM-Video-Studio.app/Contents/Info.plist
+          codesign --force --deep --sign - dist/OM-Video-Studio.app
+          mkdir -p Output
+          ditto -c -k --sequesterRsrc --keepParent dist/OM-Video-Studio.app "Output/OM-Video-Studio-macOS-${{ matrix.arch }}.zip"
+
+      - name: Launch the app and take a screenshot (smoke test)
+        continue-on-error: true
+        run: |
+          dist/OM-Video-Studio.app/Contents/MacOS/OM-Video-Studio > Output/app-stdout.txt 2>&1 &
+          sleep 12
+          screencapture -x Output/screenshot-${{ matrix.arch }}.png || true
+          pkill -f OM-Video-Studio || true
+          cat "$HOME/Library/Application Support/O.M. Video Studio/om_video_studio_log.txt" > Output/app-log-${{ matrix.arch }}.txt 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OM-Video-Studio-macOS-${{ matrix.arch }}
+          path: Output/*
+
+      - name: Add to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          files: Output/OM-Video-Studio-macOS-${{ matrix.arch }}.zip

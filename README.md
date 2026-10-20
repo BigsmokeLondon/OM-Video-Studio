@@ -11,6 +11,8 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
+**New in 1.7.0:** **macOS version (experimental).** Download `OM-Video-Studio-macOS-arm64.zip` (Apple Silicon: M1 and newer) or `OM-Video-Studio-macOS-intel.zip` (Intel Macs) from the release page. See *Install on a Mac* below. The Windows app is unchanged.
+
 **New in 1.6.2:** Pressing a tool with no input file or folder chosen now plays the Windows alert sound, explains what to do, and puts the cursor in the Input box. (Join, Crossfade and Slideshow still let you list clips inside their own window.)
 
 **New in 1.6.1:** **Full file report** now saves a readable `full report <file name>.txt` (summary first, then the complete ffprobe data) in the output folder and opens it in Notepad.
@@ -40,6 +42,15 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 3. Launch **O.M. Video Studio**. If ffmpeg is not on your computer, the app offers to download it for you (about 100 MB, one time).
 
 Prefer no installer? Download `OM-Video-Studio-Portable.zip`, unzip anywhere and run `OM-Video-Studio.exe`.
+
+## Install on a Mac (experimental)
+
+1. Download the right zip from **[Releases](../../releases/latest)**: `OM-Video-Studio-macOS-arm64.zip` for Apple Silicon (M1/M2/M3/M4), `OM-Video-Studio-macOS-intel.zip` for Intel Macs. (Apple menu > About This Mac shows which you have.)
+2. Unzip it and drag **OM-Video-Studio** into Applications.
+3. The app is not signed with an Apple Developer ID, so the first time macOS will say it cannot be opened. **Right-click (or Control-click) the app > Open > Open.** If it still refuses, run this once in Terminal: `xattr -dr com.apple.quarantine /Applications/OM-Video-Studio.app`
+4. ffmpeg is not bundled. If it is missing the app tells you and copies the command: install [Homebrew](https://brew.sh), then run `brew install ffmpeg`, and restart the app.
+
+Mac notes: the GPU checkbox stays off (NVENC is NVIDIA-only), and Windows-only touches (title-bar colour) are skipped. Please report anything odd - include the log file at `~/Library/Application Support/O.M. Video Studio/om_video_studio_log.txt`.
 
 ## Videos
 

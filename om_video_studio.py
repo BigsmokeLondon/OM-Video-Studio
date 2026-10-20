@@ -62,7 +62,7 @@ from pathlib import Path
 #  *_EXT sets: decide which files the "kind" checker accepts for each operation
 #  and which extensions the file pickers show.
 APP = "O.M. Video Studio"
-VERSION = "1.6.2"
+VERSION = "1.7.0"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -78,10 +78,17 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 #    * frozen (PyInstaller) : APP_DIR = folder of the .exe, RES_DIR = the temp
 #      _MEIPASS bundle (read-only Resource/ + app.ico), DATA_DIR = %LOCALAPPDATA%
 FROZEN = bool(getattr(sys, "frozen", False))  # True when running as the installed .exe
+IS_WIN = os.name == "nt"
+IS_MAC = sys.platform == "darwin"  # macOS support is experimental (see docs/PROJECT_OVERVIEW.md)
 APP_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))  # bundled read-only files (Resource/, app.ico)
 # Installed copies live in Program Files (read-only), so logs and the downloaded ffmpeg go in the user's data folder.
-DATA_DIR = (Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "O.M. Video Studio") if FROZEN else APP_DIR
+if FROZEN and IS_MAC:  # inside a .app bundle the folder is read-only/signed, so user data goes in Application Support
+    DATA_DIR = Path.home() / "Library" / "Application Support" / "O.M. Video Studio"
+elif FROZEN and not IS_WIN:
+    DATA_DIR = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "O.M. Video Studio"
+else:
+    DATA_DIR = (Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "O.M. Video Studio") if FROZEN else APP_DIR
 # FFMPEG_HOME: where install_ffmpeg() unpacks a downloaded ffmpeg. SETTINGS_PATH: per-user JSON (theme, language, favourites, last values...).
 FFMPEG_HOME = DATA_DIR / "ffmpeg"
 SETTINGS_PATH = Path.home() / ".om_video_studio.json"
@@ -114,7 +121,9 @@ _migrate_old_data()
 def find_tool(name):
     """ffmpeg/ffprobe/ffplay: the user's own install on PATH first, then the copy this app downloaded."""
     exe = name + (".exe" if os.name == "nt" else "")
-    return shutil.which(name) or next((str(d / exe) for d in (FFMPEG_HOME / "bin", FFMPEG_HOME) if (d / exe).exists()), None)
+    # Apps started from Finder do not inherit the shell PATH, so also look where Homebrew / MacPorts put ffmpeg.
+    extra = "" if IS_WIN else os.pathsep.join(["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/usr/bin"])
+    return shutil.which(name) or (shutil.which(name, path=extra) if extra else None) or next((str(d / exe) for d in (FFMPEG_HOME / "bin", FFMPEG_HOME) if (d / exe).exists()), None)
 
 
 # FFMPEG / FFPROBE hold the executable paths used by every subprocess call. They are module globals so refresh_tools() can re-point them after an install.
@@ -197,7 +206,7 @@ def install_ffmpeg(report):
     """Download ffmpeg into DATA_DIR/ffmpeg (no admin needed). report(fraction, text). Returns (ok, message)."""
     import zipfile
     if os.name != "nt":
-        return False, "Automatic install is Windows-only. Install ffmpeg with your package manager (e.g. apt/brew install ffmpeg)."
+        return False, "Automatic install is Windows-only. Install ffmpeg with your package manager (e.g. brew install ffmpeg or apt install ffmpeg)."
     last = ""
     for url in FFMPEG_URLS:
         zpath = Path(tempfile.gettempdir()) / "om_ffmpeg_download.zip"
@@ -990,9 +999,10 @@ def _probe_report(c, path):
         Path(path).write_text(text, encoding="utf-8")
         log(text)
         log(f"\nSaved: {path}")
-        if os.name == "nt" and not os.environ.get("OM_NO_OPEN"):
+        if not os.environ.get("OM_NO_OPEN"):
             try:
-                subprocess.Popen(["notepad.exe", path])  # show the report straight away
+                # show the report straight away: Notepad on Windows, TextEdit on macOS, default editor on Linux
+                subprocess.Popen(["notepad.exe", path] if IS_WIN else (["open", "-t", path] if IS_MAC else ["xdg-open", path]))
             except OSError:
                 pass
         return 0
@@ -1925,6 +1935,13 @@ def play_startup_sound():
                 write_log("Startup sound: wav conversion failed: " + (r.stderr or "")[-300:])
             except Exception as e:  # noqa: BLE001
                 write_log(f"Startup sound: winsound path failed: {e!r}")
+        if IS_MAC:  # afplay plays mp3 directly
+            try:
+                subprocess.Popen(["afplay", str(snd)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                write_log(f"Startup sound: playing {snd.name} via afplay")
+                return
+            except Exception as e:  # noqa: BLE001
+                write_log(f"Startup sound: afplay failed: {e!r}")
         ffplay = find_tool("ffplay") or str(Path(FFMPEG).with_name("ffplay" + (".exe" if os.name == "nt" else "")))
         if os.path.exists(ffplay):
             proc = subprocess.Popen([ffplay, "-nodisp", "-autoexit", "-loglevel", "error", str(snd)],
@@ -2054,8 +2071,28 @@ def play_ping(kind):
             import winsound
             winsound.PlaySound(str(p), winsound.SND_FILENAME | winsound.SND_ASYNC)
             return True
+        if IS_MAC:  # afplay ships with macOS; Popen returns immediately so playback is asynchronous
+            subprocess.Popen(["afplay", str(p)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
     except Exception as e:  # noqa: BLE001
         write_log(f"Ping failed: {e!r}")
+    return False
+
+
+# The "you need to do something" alert: standard Windows exclamation sound / macOS Funk sound. Returns False if nothing could be played
+# (the caller then falls back to Tk's bell). Deliberately ignores the Sound checkbox - it is a warning, not a completion ping.
+def play_alert():
+    try:
+        if os.name == "nt":
+            import winsound
+            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+            return True
+        if IS_MAC:
+            subprocess.Popen(["afplay", "/System/Library/Sounds/Funk.aiff"], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+    except Exception:  # noqa: BLE001
+        pass
     return False
 
 
@@ -2094,6 +2131,8 @@ def detect_gpu():
 #     i. ffmpeg install offer, update check, start-up
 # --------------------------------------------------------------------------- GUI
 # Emoji icon for each category tab (the text before the label in the sidebar).
+# Interface fonts per system (Segoe UI / Consolas only exist on Windows).
+UI_FONT, MONO_FONT = (("Segoe UI", "Consolas") if IS_WIN else ("Helvetica Neue", "Menlo") if IS_MAC else ("DejaVu Sans", "DejaVu Sans Mono"))
 CAT_ICONS = {"Favourites": "★", "Video": "\U0001F3AC", "Format & Quality": "\U0001F527", "Audio": "\U0001F3B5", "Combine": "\U0001F9E9",
              "Text & Subtitles": "\U0001F4AC", "Effects & Colour": "\U0001F3A8", "Images & Frames": "\U0001F5BC", "Analysis": "\U0001F50D",
              "Streaming": "\U0001F4E1"}
@@ -2191,12 +2230,12 @@ def gui():
             pass
 
     fsize = {"v": int(settings.get("fsize", 13))}
-    f_base = tkfont.Font(family="Segoe UI", size=fsize["v"])
-    f_bold = tkfont.Font(family="Segoe UI", size=fsize["v"], weight="bold")
-    f_head = tkfont.Font(family="Segoe UI", size=fsize["v"] + 3, weight="bold")
-    f_mono = tkfont.Font(family="Consolas", size=fsize["v"] - 1)
-    f_title = tkfont.Font(family="Segoe UI", size=fsize["v"] + 9, weight="normal")
-    f_brand = tkfont.Font(family="Segoe UI", size=fsize["v"] + 2, weight="normal")
+    f_base = tkfont.Font(family=UI_FONT, size=fsize["v"])
+    f_bold = tkfont.Font(family=UI_FONT, size=fsize["v"], weight="bold")
+    f_head = tkfont.Font(family=UI_FONT, size=fsize["v"] + 3, weight="bold")
+    f_mono = tkfont.Font(family=MONO_FONT, size=fsize["v"] - 1)
+    f_title = tkfont.Font(family=UI_FONT, size=fsize["v"] + 9, weight="normal")
+    f_brand = tkfont.Font(family=UI_FONT, size=fsize["v"] + 2, weight="normal")
     # Report Tk callback exceptions to the log and a message box instead of failing silently.
     def _tk_error(et, ev, tb):
         import traceback
@@ -2218,7 +2257,7 @@ def gui():
             f_.configure(size=n + extra)
         for nm in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkCaptionFont", "TkSmallCaptionFont", "TkTooltipFont"):
             try:
-                tkfont.nametofont(nm).configure(family="Segoe UI", size=n)
+                tkfont.nametofont(nm).configure(family=UI_FONT, size=n)
             except tk.TclError:
                 pass
         for nm, extra in (("SunValleyBodyFont", 0), ("SunValleyCaptionFont", -1), ("SunValleyBodyStrongFont", 0),
@@ -2541,10 +2580,7 @@ def gui():
         clips/photos inside their window (join, crossfade, slideshow: folder_one) may start with an empty Input box."""
         p = path_var.get().strip().strip('"')
         if not spec.get("folder_one") and not current_multi() and not (p and os.path.exists(p)):
-            try:
-                import winsound
-                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)  # the standard Windows alert sound (Windows only)
-            except Exception:  # noqa: BLE001
+            if not play_alert():  # standard Windows / macOS alert sound
                 root.bell()
             ent.focus_set()
             messagebox.showwarning(APP, "Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.")
@@ -2630,7 +2666,7 @@ def gui():
             if os.name == "nt":
                 os.startfile(d)  # noqa: S606
             else:
-                subprocess.Popen(["xdg-open", d])
+                subprocess.Popen(["open" if IS_MAC else "xdg-open", d])
 
     # Heart of thread safety: worker threads never touch Tk. They put tuples on the
     #  queue `q` - ('log', text), ('prog', fraction), ('info', text), ('call', fn),
@@ -2695,7 +2731,10 @@ def gui():
             top_.configure(bg=pal()["bg"])
         except tk.TclError:
             pass
-        top_.grab_set()
+        try:
+            top_.grab_set()  # modal; on some desktops the window is not viewable yet, so retry shortly
+        except tk.TclError:
+            top_.after(150, lambda: top_.winfo_exists() and top_.grab_set())
         frm = ttk.Frame(top_, padding=18)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text=spec["label"], style="Head.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
@@ -3288,6 +3327,16 @@ def gui():
     show_cat()
     # If ffmpeg/ffprobe are missing, ask the user and run install_ffmpeg in the background, then restart the app.
     def offer_ffmpeg_install():
+        if IS_MAC:
+            cmd = "brew install ffmpeg"
+            try:
+                root.clipboard_clear()
+                root.clipboard_append(cmd)
+            except tk.TclError:
+                pass
+            messagebox.showwarning(APP, "ffmpeg was not found on this Mac.\n\nOpen Terminal and run:\n\n    " + cmd + "\n\n(The command has been copied - just paste it. "
+                                   "If you don't have Homebrew, get it from https://brew.sh first.) Then restart this app.")
+            return
         if os.name != "nt":
             messagebox.showwarning(APP, "ffmpeg / ffprobe were not found on PATH. Install ffmpeg with your package manager, then restart.")
             return
