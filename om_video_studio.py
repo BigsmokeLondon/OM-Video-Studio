@@ -3617,13 +3617,13 @@ def selftest():
         return 1
     work = Path(tempfile.mkdtemp(prefix="ffself_"))
     clip, music, pic = work / "clip.mp4", work / "music.mp3", work / "pic.png"
-    sh = lambda a: subprocess.run([FFMPEG, "-v", "error", "-y"] + a, check=True)  # noqa: E731
+    sh = lambda a: subprocess.run([FFMPEG, "-nostdin", "-v", "error", "-y"] + a, check=True, stdin=subprocess.DEVNULL, timeout=120)  # noqa: E731
     srt = work / "subs.srt"
     srt.write_text("1\n00:00:00,500 --> 00:00:02,500\nHello test\n\n2\n00:00:03,000 --> 00:00:05,000\nSecond line\n", encoding="utf-8")
     cube = work / "id.cube"
     cube.write_text("LUT_3D_SIZE 2\n" + "\n".join(f"{r} {g} {b}" for b in (0, 1) for g in (0, 1) for r in (0, 1)) + "\n", encoding="utf-8")
     sh(["-f", "lavfi", "-i", "testsrc=duration=6:size=640x360:rate=25", "-f", "lavfi", "-i", "sine=frequency=440:duration=6",
-        "-i", str(srt), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-c:s", "mov_text", "-shortest", str(clip)])
+        "-i", str(srt), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-c:s", "mov_text", "-t", "6", str(clip)])  # -t, not -shortest: newer ffmpeg can hang on -shortest with a subtitle input
     sh(["-f", "lavfi", "-i", "sine=frequency=220:duration=3", str(music)])
     sh(["-f", "lavfi", "-i", "testsrc=size=320x240", "-frames:v", "1", str(pic)])
     outdir = work / "out"
