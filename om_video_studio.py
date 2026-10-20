@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 APP = "O.M. Video Studio"
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -807,16 +807,63 @@ def b_imgconv(o, c):
 
 
 # =========================================================================== ANALYSIS
-def _probe_report(c):
+def _probe_text(c):
+    """Readable summary of a file (what you usually look for first), then the complete ffprobe data."""
+    raw = c.info["raw"] or {}
+    fm = raw.get("format", {})
+    L = ["FULL FILE REPORT", "=" * 60, f"File:      {c.src}"]
+    try:
+        L.append(f"Size:      {os.path.getsize(c.src) / 1048576:.2f} MB")
+    except OSError:
+        pass
+    if fm.get("format_long_name"):
+        L.append(f"Container: {fm['format_long_name']}")
+    if c.dur:
+        L.append(f"Duration:  {fmt_ms(c.dur)}  ({c.dur:.3f} s)")
+    if fm.get("bit_rate"):
+        L.append(f"Bit rate:  {int(float(fm['bit_rate'])) // 1000} kb/s overall")
+    for st in raw.get("streams", []):
+        kind = st.get("codec_type", "?")
+        line = f"Stream #{st.get('index')}: {kind}, {st.get('codec_name', '?')}"
+        if kind == "video":
+            line += f", {st.get('width')}x{st.get('height')}, {st.get('r_frame_rate', '?')} fps"
+            if st.get("pix_fmt"):
+                line += f", {st['pix_fmt']}"
+        elif kind == "audio":
+            line += f", {st.get('sample_rate', '?')} Hz, {st.get('channels', '?')} ch"
+        if st.get("bit_rate"):
+            line += f", {int(float(st['bit_rate'])) // 1000} kb/s"
+        L.append(line)
+    tags = fm.get("tags") or {}
+    if tags:
+        L.append("Tags:     " + "; ".join(f"{k}={v}" for k, v in tags.items()))
+    L += ["", "COMPLETE ffprobe DATA", "=" * 60, json.dumps(raw, indent=2, ensure_ascii=False), ""]
+    return "\n".join(L)
+
+
+def _probe_report(c, path):
     def f(log):
-        log(json.dumps(c.info["raw"], indent=2, ensure_ascii=False))
+        text = _probe_text(c)
+        Path(path).write_text(text, encoding="utf-8")
+        log(text)
+        log(f"\nSaved: {path}")
+        if os.name == "nt" and not os.environ.get("OM_NO_OPEN"):
+            try:
+                subprocess.Popen(["notepad.exe", path])  # show the report straight away
+            except OSError:
+                pass
         return 0
     return f
 
 
 @op("Analysis", "probe", "Full file report (ffprobe)", kind="any")
 def b_probe(o, c):
-    return [job([], None, 0, func=_probe_report(c))]
+    p = c.outdir / f"full report {c.stem}.txt"
+    n = 1
+    while p.exists():
+        n += 1
+        p = c.outdir / f"full report {c.stem} ({n}).txt"
+    return [job([], str(p), 0, func=_probe_report(c, str(p)))]
 
 
 @op("Analysis", "silencedetect", "Detect silences", [O("db", "Threshold (dB)", "int", -35), O("d", "Min length (s)", "float", 0.5)], kind="any")
@@ -3139,6 +3186,25 @@ def selftest_extras():
     check("three different sounds exist", len(set(round(v, 2) for v in lens.values())) == 3, str(lens))
     check("batch chime is longer than the single ping", lens["batch"] > lens["job"] + 0.3)
     check("ping kinds", ping_kind(1, 0, False) == "job" and ping_kind(3, 0, True) == "batch" and ping_kind(0, 2, False) == "error")
+    os.environ["OM_NO_OPEN"] = "1"
+    pr = find_op("probe")
+    work.mkdir(exist_ok=True)  # earlier tests may have cleaned it up
+    rclip = work / "rep src.mp4"
+    r_ = subprocess.run([FFMPEG, "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=d=1:s=160x120", "-f", "lavfi", "-i", "sine=d=1", "-shortest", str(rclip)],
+                   creationflags=NO_WINDOW, capture_output=True, text=True)
+    if not rclip.exists():
+        print("report clip not made:", r_.stderr[-300:] if hasattr(r_, "stderr") else "")
+    rlog = []
+    ok_, fail_, outs_ = execute(pr, {}, [str(rclip)], str(work / "rep"), rlog.append, lambda f: None, threading.Event())
+    if not outs_:
+        print("\n".join(rlog[-8:]), rclip.exists())
+    rep = Path(outs_[0]) if outs_ else None
+    check("report: file named 'full report <name>.txt' in the output folder", bool(rep) and rep.name == "full report rep src.txt" and rep.parent == work / "rep", str(outs_))
+    txt = rep.read_text(encoding="utf-8") if rep and rep.exists() else ""
+    check("report: has summary and full data", "FULL FILE REPORT" in txt and "Stream #0" in txt and '"streams"' in txt)
+    ok2, fail2, outs2 = execute(pr, {}, [str(rclip)], str(work / "rep"), lambda m_: None, lambda f: None, threading.Event())
+    check("report: second run does not overwrite", bool(outs2) and outs2[0] != outs_[0] and Path(outs2[0]).exists(), str(outs2))
+    shutil.rmtree(work, ignore_errors=True)
     print("EXTRAS", "FAILED: " + ", ".join(fails) if fails else "all passed")
     return 1 if fails else 0
 

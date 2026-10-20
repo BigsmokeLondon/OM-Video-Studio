@@ -11,6 +11,8 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
+**New in 1.6.1:** **Full file report** now saves a readable `full report <file name>.txt` (summary first, then the complete ffprobe data) in the output folder and opens it in Notepad.
+
 **New in 1.6.0:**
 - **13 languages.** Pick one from the drop-down at the top right: Urdu, Bengali, Nepali, Arabic, Russian, Hindi, Punjabi, Spanish, French, German, Portuguese, Italian and Turkish (plus English). The app offers to restart to switch. Menus, buttons, operation names and option labels are translated; longer help sentences and some messages stay in English. Arabic and Urdu text is shown correctly, but the window layout is not mirrored right-to-left.
 - **Completion sounds.** A short two-note ping when a job finishes, a different, longer rising chime when a batch or queue finishes, and a low falling tone if everything failed. Tick or untick **Sound** in the bottom bar to turn them on or off.
