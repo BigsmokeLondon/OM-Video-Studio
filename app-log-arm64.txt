@@ -1,0 +1,2 @@
+[2026-10-20 13:41:18] --- O.M. Video Studio v1.7.0 started (installed exe, python 3.12.10, ffmpeg: 9.0.2) ---
+[2026-10-20 13:41:18] Startup sound: playing Whips _the_Llama_Ass.mp3 via afplay

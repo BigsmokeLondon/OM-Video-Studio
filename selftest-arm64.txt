@@ -1,0 +1,90 @@
+ok   fmt_ms 
+ok   tsec min:sec:ms 
+ok   tsec round trip 
+ok   eval_expr 
+ok   SLIDERS match real options 
+ok   find_op 
+ok   format_commands trim 
+ok   format_commands has no internal flags 
+ok   crop_filter escapes commas 
+ok   grab_frame plain 
+ok   grab_frame crop 
+ok   grab_frame bad filter fails cleanly 
+ok   grab_frame past end does not hang 
+ok   resolve single 
+ok   resolve missing 
+ok   resolve multi 
+ok   resolve folder 
+ok   resolve folder_one with multi 
+ok   preview_frame resize 
+ok   preview_frame rotate 
+ok   preview_frame social 
+ok   preview_frame blur 
+ok   preview_frame fails cleanly when it can't 
+ok   slideshow: listed photos used when input is a video 
+ok   slideshow: listed photos used when input is empty 
+ok   slideshow: folder + extra photos 
+ok   slideshow runs from listed photos 
+ok   join: listed clips used when input is empty 
+ok   join runs from listed clips 
+ok   join: valid input stays first 
+ok   resize 240p landscape 
+ok   resize 720p never enlarges 
+ok   resize 720p enlarge allowed 
+ok   resize 320p portrait uses short side 
+ok   resize custom boxes 
+ok   resize presets cover 320p..8K 
+ok   grab_frame box=None keeps full size 
+ok   png_size 
+ok   run_queue results 
+ok   run_queue progress ends at 1 
+ok   LAST_CMDS filled 
+ok   run_queue honours cancel 
+ok   14 languages listed 
+ok   language ur: all operations/options translated 
+ok   language ur: templates keep their placeholders 
+ok   language bn: all operations/options translated 
+ok   language bn: templates keep their placeholders 
+ok   language ne: all operations/options translated 
+ok   language ne: templates keep their placeholders 
+ok   language ar: all operations/options translated 
+ok   language ar: templates keep their placeholders 
+ok   language ru: all operations/options translated 
+ok   language ru: templates keep their placeholders 
+ok   language hi: all operations/options translated 
+ok   language hi: templates keep their placeholders 
+ok   language pa: all operations/options translated 
+ok   language pa: templates keep their placeholders 
+ok   language es: all operations/options translated 
+ok   language es: templates keep their placeholders 
+ok   language fr: all operations/options translated 
+ok   language fr: templates keep their placeholders 
+ok   language de: all operations/options translated 
+ok   language de: templates keep their placeholders 
+ok   language pt: all operations/options translated 
+ok   language pt: templates keep their placeholders 
+ok   language it: all operations/options translated 
+ok   language it: templates keep their placeholders 
+ok   language tr: all operations/options translated 
+ok   language tr: templates keep their placeholders 
+ok   tr: plain text 
+ok   tr: button label wrapped before the bracket 
+ok   tr: template 
+ok   tr: icon + category 
+ok   tr: unknown text stays English 
+ok   tr: English is untouched 
+ok   tr: unknown language falls back to English 
+ok   three different sounds exist 
+ok   batch chime is longer than the single ping 
+ok   ping kinds 
+ok   report: file named 'full report <name>.txt' in the output folder 
+ok   report: has summary and full data 
+ok   report: second run does not overwrite 
+EXTRAS all passed
+testing trim
+testing split
+testing convert
+testing compress
+testing extract
+testing thumb
+PASSED 6/6: trim, split, convert, compress, extract, thumb
