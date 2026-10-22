@@ -62,7 +62,7 @@ from pathlib import Path
 #  *_EXT sets: decide which files the "kind" checker accepts for each operation
 #  and which extensions the file pickers show.
 APP = "O.M. Video Studio"
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -2353,6 +2353,31 @@ def gui():
     tk.Label(hl, text="Video  ·  Audio  ·  Image toolkit", bg=BRAND_BG, fg="#9fb6cf", font=f_base).pack(anchor="w")
     hr = tk.Frame(header, bg=BRAND_BG)
     hr.pack(side="right", padx=20, pady=12)
+    # Quick Capture: the standalone on-demand screen / window / region / webcam / sound / picture recorder.
+    # Its script ships in Resource\QuickCapture; it runs as its own PowerShell window, so it is Windows only.
+    def launch_quick_capture():
+        script = RES_DIR / "Resource" / "QuickCapture" / "Quick_Capture_GUI.ps1"
+        if not script.is_file():
+            script = APP_DIR / "Resource" / "QuickCapture" / "Quick_Capture_GUI.ps1"
+        if not script.is_file():
+            messagebox.showerror(APP, "The Quick Capture files were not found in this installation.")
+            return
+        env = dict(os.environ)
+        if FFMPEG and FFMPEG != "ffmpeg":
+            env["QC_FFMPEG"] = str(FFMPEG)  # reuse the ffmpeg this app already found
+        ps = str(script).replace("'", "''")
+        cmd = ("try { & '" + ps + "' } catch { Add-Type -AssemblyName System.Windows.Forms; "
+               "[void][System.Windows.Forms.MessageBox]::Show(($_ | Out-String), 'Quick Capture error') }")
+        try:
+            subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+                              "-Command", cmd], env=env, creationflags=NO_WINDOW)
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP, f"Could not start Quick Capture:\n{e}")
+
+    if os.name == "nt":
+        hm = tk.Frame(header, bg=BRAND_BG)
+        hm.pack(side="right", padx=(0, 6), pady=12)
+        ttk.Button(hm, text="●  Quick Capture", command=launch_quick_capture).pack(anchor="n", pady=(6, 0))
     theme_btn = ttk.Button(hr, text="☾  Dark mode" if theme == "light" else "☀  Light mode", command=toggle_theme)
     if sv_ttk:
         theme_btn.pack(anchor="e", pady=(6, 0))
