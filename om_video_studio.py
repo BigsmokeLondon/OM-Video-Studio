@@ -62,7 +62,7 @@ from pathlib import Path
 #  *_EXT sets: decide which files the "kind" checker accepts for each operation
 #  and which extensions the file pickers show.
 APP = "O.M. Video Studio"
-VERSION = "1.8.0"
+VERSION = "1.7.0"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
@@ -2178,7 +2178,7 @@ def gui():
     dnd = root is not None
     if root is None:
         root = tk.Tk()
-    root.title(f"{APP}  -  O.M. Industries Inc \u00a9 2026")
+    root.title(f"{APP}  -  M.A. Industries Inc")
     root.geometry("1280x900")
     root.minsize(1020, 700)
 
@@ -2278,10 +2278,6 @@ def gui():
                 pass
         style.configure("Op.TButton", padding=(10, 14), font=f_base)
         style.configure("Run.TButton", padding=(18, 8), font=f_bold)
-        try:  # header Quick Capture button
-            style.configure("Cap.TButton", padding=(34, 8), font=f_bold, anchor="center", justify="center")
-        except tk.TclError:
-            style.configure("Cap.TButton", padding=(34, 8), font=f_bold)
         try:
             style.configure("Accent.TButton", padding=(18, 8), font=f_bold)
         except tk.TclError:
@@ -2357,32 +2353,6 @@ def gui():
     tk.Label(hl, text="Video  ·  Audio  ·  Image toolkit", bg=BRAND_BG, fg="#9fb6cf", font=f_base).pack(anchor="w")
     hr = tk.Frame(header, bg=BRAND_BG)
     hr.pack(side="right", padx=20, pady=12)
-    # Quick Capture: the standalone on-demand screen / window / region / webcam / sound / picture recorder.
-    # Its script ships in Resource\QuickCapture; it runs as its own PowerShell window, so it is Windows only.
-    def launch_quick_capture():
-        name = "Quick_Capture_GUI.ps1"
-        script = next((c for c in (RES_DIR / "Resource" / "QuickCapture" / name,
-                                   APP_DIR / "Resource" / "QuickCapture" / name,
-                                   APP_DIR / name) if c.is_file()), None)  # last one: a copy beside the .py when running from source
-        if script is None:
-            messagebox.showerror(APP, "The Quick Capture files were not found in this installation.")
-            return
-        env = dict(os.environ)
-        if FFMPEG and FFMPEG != "ffmpeg":
-            env["QC_FFMPEG"] = str(FFMPEG)  # reuse the ffmpeg this app already found
-        ps = str(script).replace("'", "''")
-        cmd = ("try { & '" + ps + "' } catch { Add-Type -AssemblyName System.Windows.Forms; "
-               "[void][System.Windows.Forms.MessageBox]::Show(($_ | Out-String), 'Quick Capture error') }")
-        try:
-            subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-                              "-Command", cmd], env=env, creationflags=NO_WINDOW)
-        except Exception as e:  # noqa: BLE001
-            messagebox.showerror(APP, f"Could not start Quick Capture:\n{e}")
-
-    if os.name == "nt":
-        hm = tk.Frame(header, bg=BRAND_BG)
-        hm.pack(side="right", fill="y", padx=(0, 14), pady=12)
-        ttk.Button(hm, text="Quick Video &\nimage capture", command=launch_quick_capture, style="Cap.TButton").pack(fill="both", expand=True, pady=(6, 0))
     theme_btn = ttk.Button(hr, text="☾  Dark mode" if theme == "light" else "☀  Light mode", command=toggle_theme)
     if sv_ttk:
         theme_btn.pack(anchor="e", pady=(6, 0))
