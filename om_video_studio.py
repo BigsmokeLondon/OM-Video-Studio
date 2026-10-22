@@ -2356,10 +2356,11 @@ def gui():
     # Quick Capture: the standalone on-demand screen / window / region / webcam / sound / picture recorder.
     # Its script ships in Resource\QuickCapture; it runs as its own PowerShell window, so it is Windows only.
     def launch_quick_capture():
-        script = RES_DIR / "Resource" / "QuickCapture" / "Quick_Capture_GUI.ps1"
-        if not script.is_file():
-            script = APP_DIR / "Resource" / "QuickCapture" / "Quick_Capture_GUI.ps1"
-        if not script.is_file():
+        name = "Quick_Capture_GUI.ps1"
+        script = next((c for c in (RES_DIR / "Resource" / "QuickCapture" / name,
+                                   APP_DIR / "Resource" / "QuickCapture" / name,
+                                   APP_DIR / name) if c.is_file()), None)  # last one: a copy beside the .py when running from source
+        if script is None:
             messagebox.showerror(APP, "The Quick Capture files were not found in this installation.")
             return
         env = dict(os.environ)
