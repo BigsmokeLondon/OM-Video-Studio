@@ -2278,6 +2278,7 @@ def gui():
                 pass
         style.configure("Op.TButton", padding=(10, 14), font=f_base)
         style.configure("Run.TButton", padding=(18, 8), font=f_bold)
+        style.configure("Cap.TButton", padding=(40, 26), font=f_bold)  # header Quick Capture button
         try:
             style.configure("Accent.TButton", padding=(18, 8), font=f_bold)
         except tk.TclError:
@@ -2378,10 +2379,7 @@ def gui():
     if os.name == "nt":
         hm = tk.Frame(header, bg=BRAND_BG)
         hm.pack(side="right", padx=(0, 14), pady=8)
-        f_qc = tkfont.Font(family=UI_FONT, size=fsize["v"] + 6, weight="bold")
-        tk.Button(hm, text="\u25cf  Quick Video and\nstill image capture", command=launch_quick_capture, font=f_qc,
-                  bg="#d93a3a", fg="#ffffff", activebackground="#f05555", activeforeground="#ffffff",
-                  relief="flat", bd=0, cursor="hand2", padx=44, pady=24).pack(anchor="n")
+        ttk.Button(hm, text="\u25cf  Quick Video and\nimage capture", command=launch_quick_capture, style="Cap.TButton").pack(anchor="n")
     theme_btn = ttk.Button(hr, text="☾  Dark mode" if theme == "light" else "☀  Light mode", command=toggle_theme)
     if sv_ttk:
         theme_btn.pack(anchor="e", pady=(6, 0))
