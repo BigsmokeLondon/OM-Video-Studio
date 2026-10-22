@@ -2178,7 +2178,7 @@ def gui():
     dnd = root is not None
     if root is None:
         root = tk.Tk()
-    root.title(f"{APP}  -  M.A. Industries Inc")
+    root.title(f"{APP}  -  O.M. Industries Inc \u00a9 2026")
     root.geometry("1280x900")
     root.minsize(1020, 700)
 
@@ -2377,8 +2377,11 @@ def gui():
 
     if os.name == "nt":
         hm = tk.Frame(header, bg=BRAND_BG)
-        hm.pack(side="right", padx=(0, 6), pady=12)
-        ttk.Button(hm, text="●  Quick Capture", command=launch_quick_capture).pack(anchor="n", pady=(6, 0))
+        hm.pack(side="right", padx=(0, 14), pady=8)
+        f_qc = tkfont.Font(family=UI_FONT, size=fsize["v"] + 6, weight="bold")
+        tk.Button(hm, text="\u25cf  Quick Video and\nstill image capture", command=launch_quick_capture, font=f_qc,
+                  bg="#d93a3a", fg="#ffffff", activebackground="#f05555", activeforeground="#ffffff",
+                  relief="flat", bd=0, cursor="hand2", padx=44, pady=24).pack(anchor="n")
     theme_btn = ttk.Button(hr, text="☾  Dark mode" if theme == "light" else "☀  Light mode", command=toggle_theme)
     if sv_ttk:
         theme_btn.pack(anchor="e", pady=(6, 0))
