@@ -54,6 +54,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 # --- 1. CONSTANTS & PATHS --------------------------------------------------
@@ -1825,6 +1826,58 @@ def make_strip(path, dur, w, h, cw=560, th=48):
     return (out, sw, sh) if sw else (None, 0, 0)
 
 
+# Scrub cache for the Trim window: small frames (about one per second, at most ~300) saved as
+#  s_00001.png, s_00002.png ... so the preview can show something instantly while a handle is
+#  dragged (the sharp exact frame follows). Kept in the temp folder, keyed by the file; old
+#  caches are removed after 3 days. Frame k is the picture at time (k-1) * step.
+SCRUB_BOX = (280, 158)
+
+
+def scrub_dir_for(path, step):
+    try:
+        st_ = os.stat(path)
+    except OSError:
+        return None
+    key = f"{path}|{st_.st_mtime_ns}|{st_.st_size}|{step:.3f}|{SCRUB_BOX}"
+    base = os.path.join(tempfile.gettempdir(), "om_video_studio_scrub")
+    try:
+        os.makedirs(base, exist_ok=True)
+        now = time.time()
+        for n_ in os.listdir(base):  # tidy up caches nobody has used for 3 days
+            pth = os.path.join(base, n_)
+            if os.path.isdir(pth) and now - os.path.getmtime(pth) > 3 * 86400:
+                shutil.rmtree(pth, ignore_errors=True)
+    except OSError:
+        pass
+    return os.path.join(base, hashlib.md5(key.encode("utf-8", "replace")).hexdigest())
+
+
+def make_scrub(path, dur, outdir, step):
+    """Fill outdir with small frames every `step` seconds. Returns True when finished (or already cached)."""
+    done = os.path.join(outdir, "ok")
+    if os.path.exists(done):
+        try:
+            os.utime(outdir)
+        except OSError:
+            pass
+        return True
+    os.makedirs(outdir, exist_ok=True)
+    vf = f"fps=1/{step:.3f},scale={SCRUB_BOX[0]}:{SCRUB_BOX[1]}:force_original_aspect_ratio=decrease"
+    cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error"]
+    if dur > 180:
+        cmd += ["-skip_frame", "nokey"]
+    cmd += ["-i", path, "-an", "-sn", "-vf", vf, os.path.join(outdir, "s_%05d.png")]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=900, creationflags=NO_WINDOW)
+        if r.returncode != 0:
+            return False
+        with open(done, "w") as f:
+            f.write("ok")
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 # Encoder-only ffmpeg flags (codec, CRF, preset...) that preview_frame removes from a job's arguments so a single-frame preview can be produced from the same command.
 _STRIP1 = {"-c:v", "-crf", "-preset", "-pix_fmt", "-profile:v", "-c:a", "-b:a", "-ar", "-ac", "-movflags", "-b:v", "-maxrate",
            "-bufsize", "-cq", "-rc", "-tune", "-level", "-c", "-codec", "-acodec", "-vcodec", "-b:a:0"}
@@ -3310,6 +3363,8 @@ def gui():
                     elif abs(e_ - pe) > 1e-6:
                         st["focus"] = "end"
                 S["prev"] = (s_, e_)
+                if st.get("scrub_show"):
+                    st["scrub_show"](s_ if st["focus"] == "start" else e_)
             redraw()
 
         def hover(x):
@@ -3440,6 +3495,50 @@ def gui():
             labels.append(lab)
         tmpd = tempfile.mkdtemp(prefix="ffprev_")
         st = {"n": 0, "after": None, "imgs": [], "focus": "start"}
+        if is_trim:
+            sc_ = {"dir": None, "step": 1.0}
+
+            def scrub_worker():
+                try:
+                    src_ = cur_src()
+                    if not src_:
+                        return
+                    dur_ = float(probe(src_)["dur"] or 0)
+                    if dur_ <= 0:
+                        return
+                    step_ = max(1.0, round(dur_ / 300.0, 2))
+                    d_ = scrub_dir_for(src_, step_)
+                    if not d_:
+                        return
+                    sc_["step"], sc_["dir"] = step_, d_  # frames become usable while they are still being made
+                    make_scrub(src_, dur_, d_, step_)
+                except Exception as e:  # noqa: BLE001
+                    write_log(f"scrub cache failed: {e!r}")
+            threading.Thread(target=scrub_worker, daemon=True).start()
+
+            def scrub_show(t):
+                """Instant (small, a bit blurry) frame for time t from the cache; the sharp one follows."""
+                d_ = sc_["dir"]
+                if not d_ or not labels or not top_.winfo_exists():
+                    return
+                k = int(round(max(0.0, t) / sc_["step"])) + 1
+                for kk in (k, k - 1, k - 2):
+                    f_ = os.path.join(d_, f"s_{kk:05d}.png")
+                    if kk >= 1 and os.path.exists(f_):
+                        break
+                else:
+                    return
+                try:
+                    im_ = tk.PhotoImage(file=f_)
+                    z_ = max(1, int(min((dim["w"] - 10) / max(1, im_.width()), (dim["h"] - 5) / max(1, im_.height())) + 0.3))
+                    if z_ > 1:
+                        im_ = im_.zoom(z_, z_)
+                except tk.TclError:
+                    return
+                st["n"] += 1  # a sharp frame from an older request must not replace this one
+                st["imgs"] = [im_]
+                labels[0].configure(image=im_, text="")
+            st["scrub_show"] = scrub_show
         if is_trim and "start" in tkvars and "end" in tkvars:
             try:
                 attach_strip(top_, box, tkvars, cur_src, st, q, dim["w"])
