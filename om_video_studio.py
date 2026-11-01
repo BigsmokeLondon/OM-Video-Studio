@@ -3733,6 +3733,7 @@ def gui():
         is_trim = spec["id"] == "trim"
         dim = {"w": 560, "h": 315} if is_trim else {"w": 430, "h": 245}  # picture slot size; Trim gets a bigger one and follows the window size
         holds = []
+        base_w, base_h = dim["w"], dim["h"]
         names = ["Preview (the handle you moved last)"] if is_trim else (["Result of the crop"] if spec["id"] == "crop" else ["Before", "After (this is what the result will look like)"])
         labels = []
         for nm in names:
@@ -3744,6 +3745,16 @@ def gui():
             lab = ttk.Label(hold, text="loading…", anchor="center")
             lab.pack(expand=True)
             labels.append(lab)
+        # "Preview at": slide through the video to see the effect at any moment (Trim and the strip tools
+        #  follow their handles instead).
+        pos_var, pos_cb = None, {"f": None}
+        if not is_trim and not strip_cfg and spec["kind"] != "image":
+            pos_var = tk.DoubleVar(value=1 / 3)
+            prow = ttk.Frame(box)
+            prow.pack(fill="x", pady=(0, 4))
+            ttk.Label(prow, text="Preview at:", style="Muted.TLabel").pack(side="left", padx=(0, 8))
+            ttk.Scale(prow, from_=0.0, to=1.0, variable=pos_var, orient="horizontal",
+                      command=lambda v: pos_cb["f"]() if pos_cb["f"] else None).pack(side="left", fill="x", expand=True)
         tmpd = tempfile.mkdtemp(prefix="ffprev_")
         st = {"n": 0, "after": None, "imgs": [], "focus": "start"}
         if is_trim:
@@ -3820,7 +3831,8 @@ def gui():
                         paths.append(f if grab_frame(src, t, f, box=(raw["__w"] - 10, raw["__h"] - 5)) else None)
                         msg += f"\nShowing the frame at {fmt_ms(t)} ({'start' if raw.get('__focus') != 'end' else 'end'} handle)"
                 elif spec["id"] != "crop":
-                    t0 = raw["__t"] if raw.get("__t") is not None else (dur / 3 if dur else 0)
+                    t0 = raw["__t"] if raw.get("__t") is not None else ((raw["__f"] * dur) if (raw.get("__f") is not None and dur) else (dur / 3 if dur else 0))
+                    t0 = min(max(0.0, t0), max(0.0, dur - 0.2)) if dur else 0
                     f0, f1 = os.path.join(tmpd, f"b{n}.png"), os.path.join(tmpd, f"a{n}.png")
                     paths.append(f0 if grab_frame(src, t0, f0, box=None) else None)
                     try:
@@ -3834,13 +3846,14 @@ def gui():
                         if ok2:
                             w1, h1 = png_size(f1)
                             w0, h0 = png_size(f0)
-                            msg = f"Size: {w0}x{h0}  ->  {w1}x{h1}" if (w0 and w1) else ""
+                            msg = (f"Size: {w0}x{h0}  ->  {w1}x{h1}" if (w0 and w1) else "") + (f"\nPreview at {fmt_ms(t0)}" if dur else "")
                         else:
                             msg = "No preview for these settings (or this kind of operation) - Run will still work."
                 else:
                     o = {k: (str(raw[k]).strip() or next(x for x in spec["opts"] if x["key"] == k)["default"]) for k in ("w", "h", "x", "y")}
                     f = os.path.join(tmpd, f"c{n}.png")
-                    ok = grab_frame(src, dur / 3 if dur else 0, f, crop_filter(o))
+                    tc = min(max(0.0, (raw["__f"] * dur) if (raw.get("__f") is not None and dur) else (dur / 3 if dur else 0)), max(0.0, dur - 0.2)) if dur else 0
+                    ok = grab_frame(src, tc, f, crop_filter(o), box=(raw["__w"] - 10, raw["__h"] - 5))
                     paths.append(f if ok else None)
                     msg = "" if ok else "These crop values don't work yet - check the width, height and offsets."
             except Exception as e:  # noqa: BLE001
@@ -3884,6 +3897,7 @@ def gui():
             raw["__focus"] = st["focus"]
             raw["__w"], raw["__h"] = dim["w"], dim["h"]
             raw["__t"] = st.get("focus_t") if spec["id"] == "gif" else None  # GIF: show the frame at the Start handle
+            raw["__f"] = pos_var.get() if pos_var is not None else None  # "Preview at" position (0..1)
             note.configure(text="Updating…")
             threading.Thread(target=work, args=(st["n"], raw), daemon=True).start()
 
@@ -3893,7 +3907,8 @@ def gui():
                     top_.after_cancel(st["after"])
                 except tk.TclError:
                     pass
-            st["after"] = top_.after(200 if strip_cfg else 600, kick)
+            st["after"] = top_.after(200 if strip_cfg else (350 if pos_var is not None else 600), kick)
+        pos_cb["f"] = later
 
         # Trim only: the dialog can be stretched. Everything extra goes to the preview and the
         #  film strip (the picture is re-made at the new size, the strip is re-tiled wider).
@@ -3904,8 +3919,8 @@ def gui():
             if not top_.winfo_exists():
                 return
             # how much bigger the window is than the size its contents ask for = room to give to the preview
-            nw = max(560, dim["w"] + top_.winfo_width() - top_.winfo_reqwidth())
-            nh = max(315, dim["h"] + top_.winfo_height() - top_.winfo_reqheight())
+            nw = max(base_w, dim["w"] + top_.winfo_width() - top_.winfo_reqwidth())
+            nh = max(base_h, dim["h"] + (top_.winfo_height() - top_.winfo_reqheight()) // max(1, len(holds)))  # extra height is shared between the pictures
             if abs(nw - dim["w"]) < 8 and abs(nh - dim["h"]) < 8:
                 return
             dim["w"], dim["h"] = nw, nh
@@ -3925,8 +3940,7 @@ def gui():
                 except tk.TclError:
                     pass
             rz["after"] = top_.after(300, apply_size)
-        if is_trim:
-            top_.bind("<Configure>", on_resize, add="+")
+        top_.bind("<Configure>", on_resize, add="+")
 
         def cleanup(e):
             if e.widget is top_:
