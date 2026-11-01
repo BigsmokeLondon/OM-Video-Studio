@@ -3389,6 +3389,26 @@ def gui():
         redraw()
         threading.Thread(target=work, daemon=True).start()
 
+        # Window stretched: re-tile the strip for the new width (cached per width).
+        def resize_strip(new_pw):
+            S["tok"] = S.get("tok", 0) + 1
+            tok = S["tok"]
+
+            def w2():
+                png, sw, sh, dur = None, 0, 0, 0.0
+                try:
+                    src = cur_src()
+                    if src:
+                        inf = probe(src)
+                        dur = float(inf["dur"] or 0)
+                        png, sw, sh = make_strip(src, dur, int(inf["w"] or 0), int(inf["h"] or 0), cw=new_pw - 2 * PAD)
+                except Exception as e:  # noqa: BLE001
+                    write_log(f"film strip resize failed: {e!r}")
+                if png:
+                    q_.put(("call", lambda: install(png, dur, sw, sh) if tok == S["tok"] else None))
+            threading.Thread(target=w2, daemon=True).start()
+        st["resize_strip"] = resize_strip
+
     # Live preview panel inside the dialog: fixed-size picture holders (so the window
     #  never jumps), 600 ms debounce after any change, then a worker renders frames
     #  with grab_frame/preview_frame. Shows Before/After pairs for most filters,
@@ -3405,12 +3425,14 @@ def gui():
         box = ttk.LabelFrame(frm, text="Live preview", padding=8)
         box.grid(row=0, column=3, rowspan=max(nrows, 4), sticky="n", padx=(18, 0))
         is_trim = spec["id"] == "trim"
-        PW, PH = (560, 315) if is_trim else (430, 245)  # picture slot size; Trim gets a bigger one
+        dim = {"w": 560, "h": 315} if is_trim else {"w": 430, "h": 245}  # picture slot size; Trim gets a bigger one and follows the window size
+        holds = []
         names = ["Preview (the handle you moved last)"] if is_trim else (["Result of the crop"] if spec["id"] == "crop" else ["Before", "After (this is what the result will look like)"])
         labels = []
         for nm in names:
             ttk.Label(box, text=nm, style="Muted.TLabel").pack(anchor="w")
-            hold = ttk.Frame(box, width=PW, height=PH)  # fixed slot so the window does not jump when a picture appears
+            hold = ttk.Frame(box, width=dim["w"], height=dim["h"])
+            holds.append(hold)  # fixed slot so the window does not jump when a picture appears
             hold.pack(pady=(0, 6))
             hold.pack_propagate(False)
             lab = ttk.Label(hold, text="loading…", anchor="center")
@@ -3420,10 +3442,10 @@ def gui():
         st = {"n": 0, "after": None, "imgs": [], "focus": "start"}
         if is_trim and "start" in tkvars and "end" in tkvars:
             try:
-                attach_strip(top_, box, tkvars, cur_src, st, q, PW)
+                attach_strip(top_, box, tkvars, cur_src, st, q, dim["w"])
             except Exception as e:  # noqa: BLE001
                 write_log(f"film strip setup failed: {e!r}")
-        note = ttk.Label(box, text="", style="Muted.TLabel", wraplength=PW + 10)
+        note = ttk.Label(box, text="", style="Muted.TLabel", wraplength=dim["w"] + 10)
         note.pack(anchor="w")
         pair = spec["id"] not in ("trim", "crop")
 
@@ -3445,7 +3467,7 @@ def gui():
                         msg = f"Clip length: {e_ - s_:.1f} s  (video is {dur:.1f} s)" if dur else f"Clip length: {e_ - s_:.1f} s"
                         t = s_ if raw.get("__focus") != "end" else max(s_, e_ - 0.1)
                         f = os.path.join(tmpd, f"t{n}.png")
-                        paths.append(f if grab_frame(src, t, f, box=(PW - 10, PH - 5)) else None)
+                        paths.append(f if grab_frame(src, t, f, box=(raw["__w"] - 10, raw["__h"] - 5)) else None)
                         msg += f"\nShowing the frame at {fmt_ms(t)} ({'start' if raw.get('__focus') != 'end' else 'end'} handle)"
                 elif spec["id"] != "crop":
                     t0 = dur / 3 if dur else 0
@@ -3486,10 +3508,10 @@ def gui():
                 except tk.TclError:
                     loaded.append(None)
             if pair:  # same shrink factor for both so a smaller result really looks smaller
-                kk = max([1] + [max(-(-i_.width() // (PW - 10)), -(-i_.height() // (PH - 5))) for i_ in loaded if i_ is not None])
+                kk = max([1] + [max(-(-i_.width() // (dim["w"] - 10)), -(-i_.height() // (dim["h"] - 5))) for i_ in loaded if i_ is not None])
                 ks = [kk] * len(loaded)
             else:
-                ks = [max(1, -(-i_.width() // (PW - 10)), -(-i_.height() // (PH - 5))) if i_ is not None else 1 for i_ in loaded]
+                ks = [max(1, -(-i_.width() // (dim["w"] - 10)), -(-i_.height() // (dim["h"] - 5))) if i_ is not None else 1 for i_ in loaded]
             for lab, img, k in zip(labels, loaded, ks):
                 if img is not None and k > 1:
                     img = img.subsample(k, k)
@@ -3510,6 +3532,7 @@ def gui():
             except Exception:  # noqa: BLE001
                 return
             raw["__focus"] = st["focus"]
+            raw["__w"], raw["__h"] = dim["w"], dim["h"]
             note.configure(text="Updating…")
             threading.Thread(target=work, args=(st["n"], raw), daemon=True).start()
 
@@ -3520,6 +3543,39 @@ def gui():
                 except tk.TclError:
                     pass
             st["after"] = top_.after(200 if is_trim else 600, kick)
+
+        # Trim only: the dialog can be stretched. Everything extra goes to the preview and the
+        #  film strip (the picture is re-made at the new size, the strip is re-tiled wider).
+        rz = {"after": None}
+
+        def apply_size():
+            rz["after"] = None
+            if not top_.winfo_exists():
+                return
+            # how much bigger the window is than the size its contents ask for = room to give to the preview
+            nw = max(560, dim["w"] + top_.winfo_width() - top_.winfo_reqwidth())
+            nh = max(315, dim["h"] + top_.winfo_height() - top_.winfo_reqheight())
+            if abs(nw - dim["w"]) < 8 and abs(nh - dim["h"]) < 8:
+                return
+            dim["w"], dim["h"] = nw, nh
+            for h_ in holds:
+                h_.configure(width=nw, height=nh)
+            note.configure(wraplength=nw + 10)
+            if st.get("resize_strip"):
+                st["resize_strip"](nw)
+            later()
+
+        def on_resize(e):
+            if e.widget is not top_:
+                return
+            if rz["after"]:
+                try:
+                    top_.after_cancel(rz["after"])
+                except tk.TclError:
+                    pass
+            rz["after"] = top_.after(300, apply_size)
+        if is_trim:
+            top_.bind("<Configure>", on_resize, add="+")
 
         def cleanup(e):
             if e.widget is top_:
