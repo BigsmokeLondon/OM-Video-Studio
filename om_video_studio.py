@@ -3935,7 +3935,7 @@ def gui():
         dim = {"w": 560, "h": 315} if is_trim else {"w": 430, "h": 245}  # picture slot size; Trim gets a bigger one and follows the window size
         holds = []
         base_w, base_h = dim["w"], dim["h"]
-        names = ["Preview (the handle you moved last)"] if is_trim else (["Result of the crop"] if spec["id"] == "crop" else ["Before", "After (this is what the result will look like)"])
+        names = ["Preview (the handle you moved last)"] if is_trim else (["Result of the crop"] if spec["id"] == "crop" else (["First clip", "Second clip (joined after it)"] if spec["id"] in ("join", "crossfade") else ["Before", "After (this is what the result will look like)"]))
         labels = []
         for nm in names:
             ttk.Label(box, text=nm, style="Muted.TLabel").pack(anchor="w")
@@ -3949,7 +3949,7 @@ def gui():
         # "Preview at": slide through the video to see the effect at any moment (Trim and the strip tools
         #  follow their handles instead).
         pos_var, pos_cb = None, {"f": None}
-        if not is_trim and not strip_cfg and spec["kind"] != "image":
+        if not is_trim and not strip_cfg and spec["kind"] != "image" and spec["id"] not in ("join", "crossfade"):
             pos_var = tk.DoubleVar(value=1 / 3)
             prow = ttk.Frame(box)
             prow.pack(fill="x", pady=(0, 4))
@@ -4036,6 +4036,20 @@ def gui():
                         f = os.path.join(tmpd, f"t{n}.png")
                         paths.append(f if grab_frame(src, t, f, box=(raw["__w"] - 10, raw["__h"] - 5)) else None)
                         msg += f"\nShowing the frame at {fmt_ms(t)} ({'start' if raw.get('__focus') != 'end' else 'end'} handle)"
+                elif spec["id"] in ("join", "crossfade"):
+                    # nothing to "preview" for a join: show the first clip and the one that follows it
+                    f0, f1 = os.path.join(tmpd, f"j0_{n}.png"), os.path.join(tmpd, f"j1_{n}.png")
+                    paths.append(f0 if grab_frame(src, min(1.0, dur / 2) if dur else 0, f0) else None)
+                    nxt = next((x for x in (raw.get("files") or []) if os.path.isfile(x) and os.path.normpath(x) != os.path.normpath(src)), "")
+                    if nxt:
+                        d2 = probe(nxt)["dur"] or 0
+                        paths.append(f1 if grab_frame(nxt, min(1.0, d2 / 2) if d2 else 0, f1) else None)
+                        fl_ = raw.get("files") or []
+                        n_cl = len(fl_) if any(os.path.normpath(x) == os.path.normpath(src) for x in fl_) else 1 + len(fl_)
+                        msg = f"{n_cl} clips will be joined, in the order shown on the timeline."
+                    else:
+                        paths.append(None)
+                        msg = "Add at least one more clip to join."
                 elif spec["id"] != "crop":
                     t0 = raw["__t"] if raw.get("__t") is not None else ((raw["__f"] * dur) if (raw.get("__f") is not None and dur) else (dur / 3 if dur else 0))
                     t0 = min(max(0.0, t0), max(0.0, dur - 0.2)) if dur else 0
