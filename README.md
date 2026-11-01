@@ -11,6 +11,8 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
+**New in 1.8.0:** **Trim now has a film strip.** A row of thumbnails across the whole video, with a time ruler and two draggable gold handles for Start and End (the parts being cut out are dimmed). The preview is larger and shows the frame at whichever handle you moved last, and the Trim window can be stretched to get a bigger view. The Start and End boxes, sliders and nudge buttons stay in step with the handles.
+
 **New in 1.7.0:** **macOS version (experimental).** Download `OM-Video-Studio-macOS-arm64.zip` (Apple Silicon: M1 and newer) or `OM-Video-Studio-macOS-intel.zip` (Intel Macs) from the release page. See *Install on a Mac* below. The Windows app is unchanged.
 
 **New in 1.6.2:** Pressing a tool with no input file or folder chosen now plays the Windows alert sound, explains what to do, and puts the cursor in the Input box. (Join, Crossfade and Slideshow still let you list clips inside their own window.)
