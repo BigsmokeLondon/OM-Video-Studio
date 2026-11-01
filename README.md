@@ -11,6 +11,8 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
+**New in 1.12.0:** **Film strip with draggable handles in more tools.** Trim audio (a waveform), Make a GIF, Speed ramp and Add a title now have the same timeline as Trim: drag the two handles to choose the part, and the boxes and sliders follow. Play selection plays just that part.
+
 **New in 1.11.0:** **Play a sample before you run.** Effects, resize/crop/rotate, speed, title and timer, and audio operations (volume, loudness, tempo, pitch, denoise, equaliser, fades, music and narration) now have a **Play sample** button. It makes a few seconds with your exact settings and plays it with sound, so you can check the result before running the whole job.
 
 **New in 1.10.0:** **Play your Trim before you cut.** A new **Play selection** button plays just the part between your Start and End handles, with sound, in its own player window (and a Stop button). The time labels on the film strip are now much larger and easier to read.
