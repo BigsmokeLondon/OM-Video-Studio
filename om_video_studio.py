@@ -3294,6 +3294,44 @@ def gui():
         cv = tk.Canvas(box, width=pw, height=RULER + TH0 + 6, highlightthickness=0, bg=pal()["log_bg"], cursor="hand2")
         cv.pack(pady=(0, 6))
 
+        # Play selection: opens ffplay in its own window with sound, playing only the part between
+        #  the two handles. (tkinter has no built-in video player, so this is the closest thing.)
+        play = {"proc": None}
+
+        def stop_play():
+            p_ = play["proc"]
+            play["proc"] = None
+            if p_ is not None and p_.poll() is None:
+                try:
+                    p_.terminate()
+                except OSError:
+                    pass
+
+        def play_sel():
+            stop_play()
+            src = cur_src()
+            if not src or S["dur"] <= 0:
+                messagebox.showinfo(APP, "Choose a video first (and wait for the film strip to appear).", parent=top_)
+                return
+            ff = find_tool("ffplay") or str(Path(FFMPEG).with_name("ffplay" + (".exe" if os.name == "nt" else "")))
+            if not (os.path.exists(ff) or shutil.which(ff)):
+                messagebox.showinfo(APP, "ffplay (the player that comes with ffmpeg) was not found, so the selection can't be played here. "
+                                    "The ffmpeg that this app downloads includes it.", parent=top_)
+                return
+            s_, e_ = times()
+            cmd = [ff, "-hide_banner", "-loglevel", "error", "-autoexit", "-ss", f"{s_:.3f}", "-t", f"{max(0.1, e_ - s_):.3f}",
+                   "-window_title", "Your cut - close this window to stop"]
+            cmd += ["-x", "960"] if S.get("vw", 16) >= S.get("vh", 9) else ["-y", "720"]
+            try:
+                play["proc"] = subprocess.Popen(cmd + ["-i", src], creationflags=NO_WINDOW)
+            except OSError as e:
+                messagebox.showinfo(APP, f"Couldn't start the player: {e}", parent=top_)
+        brow = ttk.Frame(box)
+        brow.pack(fill="x", pady=(0, 6))
+        ttk.Button(brow, text="▶  Play selection (with sound)", command=play_sel).pack(side="left")
+        ttk.Button(brow, text="■  Stop", command=stop_play).pack(side="left", padx=(6, 0))
+        top_.bind("<Destroy>", lambda e: stop_play() if e.widget is top_ else None, add="+")
+
         def clock(t):
             t = int(round(t))
             return f"{t // 3600}:{t // 60 % 60:02d}:{t % 60:02d}" if t >= 3600 else f"{t // 60}:{t % 60:02d}"
@@ -3437,6 +3475,7 @@ def gui():
                 if src:
                     inf = probe(src)
                     dur = float(inf["dur"] or 0)
+                    S["vw"], S["vh"] = int(inf["w"] or 16), int(inf["h"] or 9)
                     png, sw, sh = make_strip(src, dur, int(inf["w"] or 0), int(inf["h"] or 0), cw=pw - 2 * PAD)
             except Exception as e:  # noqa: BLE001
                 write_log(f"film strip failed: {e!r}")
