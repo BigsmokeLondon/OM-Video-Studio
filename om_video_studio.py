@@ -3287,7 +3287,9 @@ def gui():
     #  so all of them stay in sync. st["focus"] says which handle was moved last (the big
     #  preview shows that frame).
     def attach_strip(top_, box, tkvars, cur_src, st, q_, pw):
-        PAD, RULER, TH0 = 8, 18, 48
+        PAD, TH0 = 8, 48
+        RULER = f_base.metrics("linespace") + 8  # the time labels use the same font as the "Clip length" line
+        max_labels = max(4, int((pw - 2 * PAD) / (f_base.measure("0:00:00") + 22)))
         S = {"img": None, "dur": 0.0, "sw": pw - 2 * PAD, "th": TH0, "msg": "Building film strip…", "drag": None, "prev": (None, None)}
         cv = tk.Canvas(box, width=pw, height=RULER + TH0 + 6, highlightthickness=0, bg=pal()["log_bg"], cursor="hand2")
         cv.pack(pady=(0, 6))
@@ -3335,12 +3337,12 @@ def gui():
                 cv.create_text(int(cv.cget("width")) // 2, h_ // 2 + 3, text=S["msg"], fill=pl["muted"])
                 return
             cv.create_image(PAD, RULER, image=S["img"], anchor="nw")
-            step = next((s_ for s_ in (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600) if d / s_ <= 10), 7200)
+            step = next((s_ for s_ in (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600) if d / s_ <= max_labels), 7200)
             t = 0
             while t <= d + 1e-6:
                 x = x_of(t)
                 cv.create_line(x, RULER - 5, x, RULER, fill=pl["muted"])
-                cv.create_text(x + 2, RULER - 4, text=clock(t), anchor="sw", fill=pl["muted"], font=("TkDefaultFont", 7))
+                cv.create_text(x + 3, RULER - 3, text=clock(t), anchor="sw", fill=pl["fg"] if "fg" in pl else pl["muted"], font=f_base)
                 t += step
             s_, e_ = times()
             xs, xe = x_of(s_), x_of(e_)
@@ -3374,8 +3376,12 @@ def gui():
             x = min(max(x, PAD), PAD + S["sw"])
             cv.create_line(x, RULER, x, RULER + S["th"], fill="#ffffff", tags="hov")
             lab = fmt_ms(t_of(x))
-            cv.create_text(min(x + 4, int(cv.cget("width")) - 60), RULER + S["th"] - 8, text=lab, anchor="w", fill="#ffffff",
-                           font=("TkDefaultFont", 8, "bold"), tags="hov")
+            wlab = f_base.measure("000:00:000") + 10
+            lx = min(x + 6, int(cv.cget("width")) - wlab - 2)
+            ly = RULER + S["th"] - f_base.metrics("linespace") // 2 - 4
+            bg_ = cv.create_rectangle(lx - 3, ly - f_base.metrics("linespace") // 2 - 1, lx + wlab - 3, ly + f_base.metrics("linespace") // 2 + 2,
+                                      fill="#000000", outline="", tags="hov")
+            cv.create_text(lx, ly, text=lab, anchor="w", fill="#ffffff", font=f_base, tags="hov")
 
         def press(e):
             if S["dur"] <= 0 or S["img"] is None:
