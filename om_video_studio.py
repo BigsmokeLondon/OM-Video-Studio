@@ -1832,6 +1832,47 @@ def make_strip(path, dur, w, h, cw=560, th=48):
 #  caches are removed after 3 days. Frame k is the picture at time (k-1) * step.
 SCRUB_BOX = (280, 158)
 
+# Which operations get the film strip with handles in their window, and which boxes the two handles control.
+#  a / b = option keys; mode "range" = a is the start time and b the end time, "window" = a is the start
+#  and b the LENGTH (Make a GIF); fa / fb = how a value is written into the box ("ms" = 001:22:400 like the
+#  sliders use, "num" = plain seconds); blank = an empty end box means "until the end of the file".
+STRIP_OPS = {
+    "trim": dict(a="start", b="end", mode="range", fa="ms", fb="ms", blank=True),
+    "atrim": dict(a="start", b="end", mode="range", fa="ms", fb="ms", blank=True, audio=True),
+    "drawtext": dict(a="start", b="end", mode="range", fa="ms", fb="ms", blank=True),
+    "ramp": dict(a="s", b="e", mode="range", fa="num", fb="num", blank=False),
+    "gif": dict(a="start", b="dur", mode="window", fa="ms", fb="num", blank=False),
+}
+
+
+def make_wave(path, dur, cw, th=64):
+    """Waveform picture for audio files (the film strip of an audio file). Returns (png_path, width, height)."""
+    if dur <= 0:
+        return None, 0, 0
+    try:
+        st_ = os.stat(path)
+        key = f"{path}|{st_.st_mtime_ns}|{st_.st_size}|wave|{cw}|{th}"
+        d = os.path.join(tempfile.gettempdir(), "om_video_studio_strips")
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        return None, 0, 0
+    out = os.path.join(d, hashlib.md5(key.encode("utf-8", "replace")).hexdigest() + ".png")
+    if os.path.exists(out) and os.path.getsize(out) > 0:
+        sw, sh = png_size(out)
+        return (out, sw, sh) if sw else (None, 0, 0)
+    part = out[:-4] + ".part.png"
+    cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-i", path, "-vn", "-filter_complex",
+           f"aformat=channel_layouts=mono,showwavespic=s={cw}x{th}:colors=0x4fa3e0", "-frames:v", "1", part]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=240, creationflags=NO_WINDOW)
+        if r.returncode != 0 or not os.path.exists(part) or os.path.getsize(part) == 0:
+            return None, 0, 0
+        os.replace(part, out)
+    except (OSError, subprocess.SubprocessError):
+        return None, 0, 0
+    sw, sh = png_size(out)
+    return (out, sw, sh) if sw else (None, 0, 0)
+
 
 def scrub_dir_for(path, step):
     try:
@@ -3095,7 +3136,7 @@ def gui():
         ttk.Button(bf, text="Run", style=run_style, command=go).pack(side="left")
         top_.bind("<Return>", lambda e: go())
         top_.bind("<Escape>", lambda e: top_.destroy())
-        if spec["id"] in ("trim", "crop") or spec["kind"] in ("video", "image"):
+        if spec["id"] in ("trim", "crop") or spec["id"] in STRIP_OPS or spec["kind"] in ("video", "image"):
             try:
                 attach_preview(top_, frm, spec, getters, tkvars, r + 1)
             except Exception as e:  # noqa: BLE001
@@ -3419,7 +3460,13 @@ def gui():
     #  line with the time. It reads and writes the same Start/End text boxes as the sliders,
     #  so all of them stay in sync. st["focus"] says which handle was moved last (the big
     #  preview shows that frame).
-    def attach_strip(top_, box, tkvars, cur_src, st, q_, pw):
+    def attach_strip(top_, box, tkvars, cur_src, st, q_, pw, cfg=None):
+        cfg = cfg or STRIP_OPS["trim"]
+        KA, KB, WINDOW = cfg["a"], cfg["b"], cfg["mode"] == "window"
+
+        def num(t):
+            return (f"{max(0.0, t):.3f}".rstrip("0").rstrip(".")) or "0"
+        FMT = {"ms": fmt_ms, "num": num}
         PAD, TH0 = 8, 48
         RULER = f_base.metrics("linespace") + 8  # the time labels use the same font as the "Clip length" line
         max_labels = max(4, int((pw - 2 * PAD) / (f_base.measure("0:00:00") + 22)))
@@ -3453,8 +3500,11 @@ def gui():
                 return
             s_, e_ = times()
             cmd = [ff, "-hide_banner", "-loglevel", "error", "-autoexit", "-ss", f"{s_:.3f}", "-t", f"{max(0.1, e_ - s_):.3f}",
-                   "-window_title", "Your cut - close this window to stop"]
-            cmd += ["-x", "960"] if S.get("vw", 16) >= S.get("vh", 9) else ["-y", "720"]
+                   "-window_title", "Your selection - close this window to stop"]
+            if cfg.get("audio"):
+                cmd += ["-nodisp"]
+            else:
+                cmd += ["-x", "960"] if S.get("vw", 16) >= S.get("vh", 9) else ["-y", "720"]
             try:
                 play["proc"] = subprocess.Popen(cmd + ["-i", src], creationflags=NO_WINDOW)
             except OSError as e:
@@ -3472,12 +3522,15 @@ def gui():
         def times():
             d = S["dur"]
             try:
-                s_ = tsec(tkvars["start"].get() or "0")
+                s_ = tsec(tkvars[KA].get() or "0")
             except ValueError:
                 s_ = 0.0
             try:
-                et = str(tkvars["end"].get()).strip()
-                e_ = tsec(et) if et else d
+                et = str(tkvars[KB].get()).strip()
+                if WINDOW:
+                    e_ = s_ + max(0.1, float(et or 0))
+                else:
+                    e_ = tsec(et) if et else d
             except ValueError:
                 e_ = d
             s_ = min(max(s_, 0.0), d)
@@ -3536,6 +3589,7 @@ def gui():
                     elif abs(e_ - pe) > 1e-6:
                         st["focus"] = "end"
                 S["prev"] = (s_, e_)
+                st["focus_t"] = s_ if st["focus"] == "start" else e_
                 if st.get("scrub_show"):
                     st["scrub_show"](s_ if st["focus"] == "start" else e_)
             redraw()
@@ -3569,10 +3623,18 @@ def gui():
             t = t_of(e.x)
             s_, e_ = times()
             if S["drag"] == "start":
-                tkvars["start"].set(fmt_ms(min(t, max(0.0, e_ - 0.1))))
+                t = min(t, max(0.0, e_ - 0.1))
+                if WINDOW:  # the length follows, so the END stays where it is
+                    tkvars[KB].set(num(max(0.1, e_ - t)))
+                tkvars[KA].set(FMT[cfg["fa"]](t))
             else:
                 t = max(t, s_ + 0.1)
-                tkvars["end"].set("" if t >= S["dur"] - 0.05 else fmt_ms(t))
+                if WINDOW:
+                    tkvars[KB].set(num(min(30.0, max(0.1, t - s_))))  # a GIF longer than 30 s would be enormous
+                elif cfg["blank"] and t >= S["dur"] - 0.05:
+                    tkvars[KB].set("")
+                else:
+                    tkvars[KB].set(FMT[cfg["fb"]](t if cfg["blank"] else min(t, S["dur"] - 0.1)))
             hover(e.x)
 
         def release(e):
@@ -3583,7 +3645,7 @@ def gui():
         cv.bind("<ButtonRelease-1>", release)
         cv.bind("<Motion>", lambda e: hover(e.x) if not S["drag"] else None)
         cv.bind("<Leave>", lambda e: cv.delete("hov"))
-        for v in (tkvars["start"], tkvars["end"]):
+        for v in (tkvars[KA], tkvars[KB]):
             v.trace_add("write", track)
 
         def install(png, dur, sw, sh):
@@ -3609,7 +3671,10 @@ def gui():
                     inf = probe(src)
                     dur = float(inf["dur"] or 0)
                     S["vw"], S["vh"] = int(inf["w"] or 16), int(inf["h"] or 9)
-                    png, sw, sh = make_strip(src, dur, int(inf["w"] or 0), int(inf["h"] or 0), cw=pw - 2 * PAD)
+                    if cfg.get("audio"):
+                        png, sw, sh = make_wave(src, dur, pw - 2 * PAD)
+                    else:
+                        png, sw, sh = make_strip(src, dur, int(inf["w"] or 0), int(inf["h"] or 0), cw=pw - 2 * PAD)
             except Exception as e:  # noqa: BLE001
                 write_log(f"film strip failed: {e!r}")
             if png:
@@ -3634,7 +3699,10 @@ def gui():
                     if src:
                         inf = probe(src)
                         dur = float(inf["dur"] or 0)
-                        png, sw, sh = make_strip(src, dur, int(inf["w"] or 0), int(inf["h"] or 0), cw=new_pw - 2 * PAD)
+                        if cfg.get("audio"):
+                            png, sw, sh = make_wave(src, dur, new_pw - 2 * PAD)
+                        else:
+                            png, sw, sh = make_strip(src, dur, int(inf["w"] or 0), int(inf["h"] or 0), cw=new_pw - 2 * PAD)
                 except Exception as e:  # noqa: BLE001
                     write_log(f"film strip resize failed: {e!r}")
                 if png:
@@ -3657,6 +3725,11 @@ def gui():
         src = cur_src({"files": getters["files"]()} if "files" in getters else None)
         box = ttk.LabelFrame(frm, text="Live preview", padding=8)
         box.grid(row=0, column=3, rowspan=max(nrows, 4), sticky="n", padx=(18, 0))
+        if spec["id"] == "atrim":  # audio file: no pictures, just the waveform with its two handles
+            box.configure(text="Selection")
+            attach_strip(top_, box, tkvars, cur_src, {"n": 0, "after": None, "imgs": [], "focus": "start"}, q, 430, STRIP_OPS["atrim"])
+            return
+        strip_cfg = STRIP_OPS.get(spec["id"])
         is_trim = spec["id"] == "trim"
         dim = {"w": 560, "h": 315} if is_trim else {"w": 430, "h": 245}  # picture slot size; Trim gets a bigger one and follows the window size
         holds = []
@@ -3717,9 +3790,9 @@ def gui():
                 st["imgs"] = [im_]
                 labels[0].configure(image=im_, text="")
             st["scrub_show"] = scrub_show
-        if is_trim and "start" in tkvars and "end" in tkvars:
+        if strip_cfg and strip_cfg["a"] in tkvars and strip_cfg["b"] in tkvars:
             try:
-                attach_strip(top_, box, tkvars, cur_src, st, q, dim["w"])
+                attach_strip(top_, box, tkvars, cur_src, st, q, dim["w"], strip_cfg)
             except Exception as e:  # noqa: BLE001
                 write_log(f"film strip setup failed: {e!r}")
         note = ttk.Label(box, text="", style="Muted.TLabel", wraplength=dim["w"] + 10)
@@ -3747,7 +3820,7 @@ def gui():
                         paths.append(f if grab_frame(src, t, f, box=(raw["__w"] - 10, raw["__h"] - 5)) else None)
                         msg += f"\nShowing the frame at {fmt_ms(t)} ({'start' if raw.get('__focus') != 'end' else 'end'} handle)"
                 elif spec["id"] != "crop":
-                    t0 = dur / 3 if dur else 0
+                    t0 = raw["__t"] if raw.get("__t") is not None else (dur / 3 if dur else 0)
                     f0, f1 = os.path.join(tmpd, f"b{n}.png"), os.path.join(tmpd, f"a{n}.png")
                     paths.append(f0 if grab_frame(src, t0, f0, box=None) else None)
                     try:
@@ -3810,6 +3883,7 @@ def gui():
                 return
             raw["__focus"] = st["focus"]
             raw["__w"], raw["__h"] = dim["w"], dim["h"]
+            raw["__t"] = st.get("focus_t") if spec["id"] == "gif" else None  # GIF: show the frame at the Start handle
             note.configure(text="Updating…")
             threading.Thread(target=work, args=(st["n"], raw), daemon=True).start()
 
@@ -3819,7 +3893,7 @@ def gui():
                     top_.after_cancel(st["after"])
                 except tk.TclError:
                     pass
-            st["after"] = top_.after(200 if is_trim else 600, kick)
+            st["after"] = top_.after(200 if strip_cfg else 600, kick)
 
         # Trim only: the dialog can be stretched. Everything extra goes to the preview and the
         #  film strip (the picture is re-made at the new size, the strip is re-tiled wider).
