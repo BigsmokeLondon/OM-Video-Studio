@@ -2972,6 +2972,7 @@ def gui():
             elif t == "files":
                 lb = tk.Listbox(frm, height=5, width=40, relief="flat", bg=pal()["log_bg"], fg=pal()["log_fg"], selectbackground=pal()["sel"], highlightthickness=1)
                 lb.grid(row=r, column=1, sticky="ew")
+                top_.om_files_lb = lb  # the clip timeline (Join) reads and re-orders this list
                 bf = ttk.Frame(frm)
                 bf.grid(row=r, column=2, padx=4)
                 ttk.Button(bf, text="Add…", command=lambda lb=lb, kind=spec["kind"]: [lb.insert("end", os.path.normpath(p)) for p in filedialog.askopenfilenames(filetypes=ft_for("image" if kind == "image" else "media"))] + [top_.event_generate("<<FilesChanged>>")]).pack(fill="x")
@@ -3710,6 +3711,203 @@ def gui():
             threading.Thread(target=w2, daemon=True).start()
         st["resize_strip"] = resize_strip
 
+    # Clip timeline for Join clips / Join with crossfade: every clip as a block, in order, with its first
+    #  frame, name and length (block width = length). Drag a block left or right to change the order; the
+    #  list in the window is re-ordered to match. A clip that comes from the Input box is locked in first
+    #  place. Crossfade shows the overlap marks and the shortened total.
+    def attach_timeline(top_, box, spec, getters, tkvars, st, pw, tmpd):
+        lb = getattr(top_, "om_files_lb", None)
+        if lb is None:
+            return
+        H, THUMB = 92, (80, 45)
+        T = {"w": pw, "clips": [], "locked": 0, "info": {}, "imgs": {}, "drag": None, "mx": 0, "gen": 0}
+        cv = tk.Canvas(box, width=pw, height=H, highlightthickness=0, bg=pal()["log_bg"], cursor="hand2")
+        cv.pack(pady=(0, 6))
+        hint = ttk.Label(box, text="Drag a clip left or right to change the order.", style="Muted.TLabel")
+        hint.pack(anchor="w")
+
+        def alive():
+            try:
+                return bool(cv.winfo_exists())
+            except tk.TclError:
+                return False
+
+        def clips_now():
+            extras = list(lb.get(0, "end"))
+            try:
+                files, opts2, err = resolve_files(spec, {"files": extras}, path_var.get().strip().strip('"'), current_multi())
+            except Exception:  # noqa: BLE001
+                return extras, 0
+            if err or not files:
+                return extras, 0
+            allc = list(files) + list(opts2.get("files", []))
+            return allc, max(0, len(allc) - len(extras))
+
+        def trlen():
+            try:
+                return max(0.0, float(str(tkvars["tr"].get()).strip() or 0)) if "tr" in tkvars else 0.0
+            except ValueError:
+                return 0.0
+
+        def layout():
+            W = T["w"] - 8
+            durs = [max(0.1, T["info"].get(c, (0.0,))[0] or 1.0) for c in T["clips"]]
+            tot = sum(durs) or 1.0
+            ws = [max(54.0, d / tot * W) for d in durs]
+            sc = min(1.0, W / (sum(ws) or 1.0))
+            ws = [w * sc for w in ws]
+            xs, x = [], 4.0
+            for w in ws:
+                xs.append(x)
+                x += w
+            return xs, ws, durs
+
+        def clock(t):
+            t = int(round(t))
+            return f"{t // 3600}:{t // 60 % 60:02d}:{t % 60:02d}" if t >= 3600 else f"{t // 60}:{t % 60:02d}"
+
+        def redraw():
+            if not alive():
+                return
+            pl = pal()
+            cv.delete("all")
+            cv.configure(bg=pl["log_bg"], width=T["w"])
+            if not T["clips"]:
+                cv.create_text(T["w"] // 2, H // 2, text="Add clips to see the timeline", fill=pl["muted"])
+                return
+            xs, ws, durs = layout()
+            drag = T["drag"]
+            order = list(range(len(T["clips"])))
+            for i in order:
+                x0, w = xs[i], ws[i]
+                if drag is not None and i == drag:
+                    continue
+                draw_block(i, x0, w, durs[i], pl, 0)
+            if drag is not None:
+                draw_block(drag, T["mx"] - ws[drag] / 2, ws[drag], durs[drag], pl, 1)
+                ins = insert_index(xs, ws)
+                ix = xs[ins] if ins < len(xs) else xs[-1] + ws[-1]
+                cv.create_line(ix, 2, ix, H - 2, fill=BRAND_GOLD, width=3)
+            total = sum(T["info"].get(c, (0.0,))[0] or 0.0 for c in T["clips"])
+            tr = trlen() if spec["id"] == "crossfade" else 0.0
+            if tr and len(T["clips"]) > 1:
+                total = max(0.0, total - tr * (len(T["clips"]) - 1))
+            hint.configure(text=f"{len(T['clips'])} clips, about {clock(total)} in total" + (" (after the crossfades)" if tr else "")
+                           + "  -  drag a clip to change the order")
+
+        def draw_block(i, x0, w, dur, pl, lifted):
+            c = T["clips"][i]
+            locked = i < T["locked"]
+            y0, y1 = (2 if lifted else 6), H - 4
+            fill = "#3a5f8f" if lifted else ("#2b3f5c" if i % 2 == 0 else "#35506f")
+            cv.create_rectangle(x0 + 1, y0, x0 + w - 1, y1, fill=fill, outline=BRAND_GOLD if locked else "#6f8fb8", width=2 if locked else 1)
+            img = T["imgs"].get(c)
+            if img is not None and w >= 92:
+                cv.create_image(x0 + 6, y0 + 5, image=img, anchor="nw")
+            name = Path(c).name
+            maxc = max(4, int((w - 8) / 7))
+            if len(name) > maxc:
+                name = name[:maxc - 1] + "…"
+            d = T["info"].get(c, (0.0,))[0]
+            cv.create_text(x0 + 6, y1 - 22, text=name, anchor="w", fill="#ffffff", font=("TkDefaultFont", 9, "bold"))
+            cv.create_text(x0 + 6, y1 - 8, text=(clock(d) if d else "…") + ("  (Input box)" if locked and w > 120 else ""), anchor="w", fill="#c8d6ea", font=("TkDefaultFont", 8))
+            if spec["id"] == "crossfade" and i > 0 and not lifted:
+                cv.create_text(x0, y0 + 8, text="✕", fill=BRAND_GOLD, font=("TkDefaultFont", 10, "bold"))
+
+        def insert_index(xs, ws):
+            """Where the dragged block would land (a position among the movable clips)."""
+            mx = T["mx"]
+            idx = len(xs)
+            for j in range(len(xs)):
+                if j == T["drag"] or j < T["locked"]:
+                    continue
+                if mx < xs[j] + ws[j] / 2:
+                    idx = j
+                    break
+            return max(idx, T["locked"])
+
+        def press(e):
+            if not T["clips"]:
+                return
+            xs, ws, _ = layout()
+            for i in range(len(xs)):
+                if xs[i] <= e.x <= xs[i] + ws[i] and i >= T["locked"]:
+                    T["drag"], T["mx"] = i, e.x
+                    redraw()
+                    return
+
+        def move(e):
+            if T["drag"] is not None:
+                T["mx"] = e.x
+                redraw()
+
+        def release(e):
+            i = T["drag"]
+            if i is None:
+                return
+            xs, ws, _ = layout()
+            T["mx"] = e.x
+            ins = insert_index(xs, ws)
+            T["drag"] = None
+            new = list(T["clips"])
+            item = new.pop(i)
+            ins = ins - 1 if ins > i else ins
+            new.insert(max(T["locked"], ins), item)
+            if new != T["clips"]:
+                extras = new[T["locked"]:]
+                lb.delete(0, "end")
+                for f in extras:
+                    lb.insert("end", f)
+                top_.event_generate("<<FilesChanged>>")
+            else:
+                redraw()
+
+        cv.bind("<ButtonPress-1>", press)
+        cv.bind("<B1-Motion>", move)
+        cv.bind("<ButtonRelease-1>", release)
+
+        def info_worker(clips, gen):
+            for c in clips:
+                if T["gen"] != gen:
+                    return
+                if c in T["info"] and c in T["imgs"]:
+                    continue
+                try:
+                    d = float(probe(c)["dur"] or 0)
+                except Exception:  # noqa: BLE001
+                    d = 0.0
+                png = os.path.join(tmpd, f"tl_{abs(hash(c))}.png")
+                ok = os.path.exists(png) or grab_frame(c, min(1.0, d / 2) if d else 0, png, box=THUMB)
+
+                def apply(c=c, d=d, png=png, ok=ok):
+                    if not alive():
+                        return
+                    T["info"][c] = (d,)
+                    if ok:
+                        try:
+                            T["imgs"][c] = tk.PhotoImage(file=png)
+                        except tk.TclError:
+                            pass
+                    redraw()
+                q.put(("call", apply))
+
+        def refresh(*_):
+            if not alive():
+                return
+            T["clips"], T["locked"] = clips_now()
+            T["gen"] += 1
+            redraw()
+            threading.Thread(target=info_worker, args=(list(T["clips"]), T["gen"]), daemon=True).start()
+
+        def resize_tl(new_pw):
+            T["w"] = new_pw
+            redraw()
+        st["resize_tl"] = resize_tl
+        if "tr" in tkvars:
+            tkvars["tr"].trace_add("write", lambda *_: redraw())
+        top_.bind("<<FilesChanged>>", refresh, add="+")
+        refresh()
+
     # Live preview panel inside the dialog: fixed-size picture holders (so the window
     #  never jumps), 600 ms debounce after any change, then a worker renders frames
     #  with grab_frame/preview_frame. Shows Before/After pairs for most filters,
@@ -3719,6 +3917,9 @@ def gui():
         def cur_src(raw=None):
             src_ = preview_source()
             if spec["kind"] == "image" and (not src_ or Path(src_).suffix.lower() not in IMAGE_EXT):
+                fl = (raw or {}).get("files") or []
+                src_ = fl[0] if fl and os.path.isfile(fl[0]) else ""
+            elif not src_ and spec.get("folder_one"):  # Join etc.: the Input box is empty, so the first listed clip is the picture
                 fl = (raw or {}).get("files") or []
                 src_ = fl[0] if fl and os.path.isfile(fl[0]) else ""
             return src_
@@ -3734,7 +3935,7 @@ def gui():
         dim = {"w": 560, "h": 315} if is_trim else {"w": 430, "h": 245}  # picture slot size; Trim gets a bigger one and follows the window size
         holds = []
         base_w, base_h = dim["w"], dim["h"]
-        names = ["Preview (the handle you moved last)"] if is_trim else (["Result of the crop"] if spec["id"] == "crop" else ["Before", "After (this is what the result will look like)"])
+        names = ["Preview (the handle you moved last)"] if is_trim else (["Result of the crop"] if spec["id"] == "crop" else (["First clip", "Second clip (joined after it)"] if spec["id"] in ("join", "crossfade") else ["Before", "After (this is what the result will look like)"]))
         labels = []
         for nm in names:
             ttk.Label(box, text=nm, style="Muted.TLabel").pack(anchor="w")
@@ -3748,7 +3949,7 @@ def gui():
         # "Preview at": slide through the video to see the effect at any moment (Trim and the strip tools
         #  follow their handles instead).
         pos_var, pos_cb = None, {"f": None}
-        if not is_trim and not strip_cfg and spec["kind"] != "image":
+        if not is_trim and not strip_cfg and spec["kind"] != "image" and spec["id"] not in ("join", "crossfade"):
             pos_var = tk.DoubleVar(value=1 / 3)
             prow = ttk.Frame(box)
             prow.pack(fill="x", pady=(0, 4))
@@ -3801,6 +4002,11 @@ def gui():
                 st["imgs"] = [im_]
                 labels[0].configure(image=im_, text="")
             st["scrub_show"] = scrub_show
+        if spec["id"] in ("join", "crossfade"):
+            try:
+                attach_timeline(top_, box, spec, getters, tkvars, st, dim["w"], tmpd)
+            except Exception as e:  # noqa: BLE001
+                write_log(f"clip timeline setup failed: {e!r}")
         if strip_cfg and strip_cfg["a"] in tkvars and strip_cfg["b"] in tkvars:
             try:
                 attach_strip(top_, box, tkvars, cur_src, st, q, dim["w"], strip_cfg)
@@ -3830,6 +4036,20 @@ def gui():
                         f = os.path.join(tmpd, f"t{n}.png")
                         paths.append(f if grab_frame(src, t, f, box=(raw["__w"] - 10, raw["__h"] - 5)) else None)
                         msg += f"\nShowing the frame at {fmt_ms(t)} ({'start' if raw.get('__focus') != 'end' else 'end'} handle)"
+                elif spec["id"] in ("join", "crossfade"):
+                    # nothing to "preview" for a join: show the first clip and the one that follows it
+                    f0, f1 = os.path.join(tmpd, f"j0_{n}.png"), os.path.join(tmpd, f"j1_{n}.png")
+                    paths.append(f0 if grab_frame(src, min(1.0, dur / 2) if dur else 0, f0) else None)
+                    nxt = next((x for x in (raw.get("files") or []) if os.path.isfile(x) and os.path.normpath(x) != os.path.normpath(src)), "")
+                    if nxt:
+                        d2 = probe(nxt)["dur"] or 0
+                        paths.append(f1 if grab_frame(nxt, min(1.0, d2 / 2) if d2 else 0, f1) else None)
+                        fl_ = raw.get("files") or []
+                        n_cl = len(fl_) if any(os.path.normpath(x) == os.path.normpath(src) for x in fl_) else 1 + len(fl_)
+                        msg = f"{n_cl} clips will be joined, in the order shown on the timeline."
+                    else:
+                        paths.append(None)
+                        msg = "Add at least one more clip to join."
                 elif spec["id"] != "crop":
                     t0 = raw["__t"] if raw.get("__t") is not None else ((raw["__f"] * dur) if (raw.get("__f") is not None and dur) else (dur / 3 if dur else 0))
                     t0 = min(max(0.0, t0), max(0.0, dur - 0.2)) if dur else 0
@@ -3929,6 +4149,8 @@ def gui():
             note.configure(wraplength=nw + 10)
             if st.get("resize_strip"):
                 st["resize_strip"](nw)
+            if st.get("resize_tl"):
+                st["resize_tl"](nw)
             later()
 
         def on_resize(e):
