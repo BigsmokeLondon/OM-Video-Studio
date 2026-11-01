@@ -11,6 +11,8 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
+**New in 1.14.0:** **Clip timeline for Join clips and Join with crossfade.** Every clip shows as a block in order, with its first frame, name and length. Drag a block to change the order, and see the total length (with the crossfade overlaps taken off). The previews now show the first clip and the one that follows it, even when the Input box is empty.
+
 **New in 1.13.0:** **Bigger, scrubbable previews everywhere.** Every window with a preview can now be stretched (the pictures grow with it), and the Before/After and Crop previews have a **Preview at** slider, so you can check an effect at any moment in the video.
 
 **New in 1.12.0:** **Film strip with draggable handles in more tools.** Trim audio (a waveform), Make a GIF, Speed ramp and Add a title now have the same timeline as Trim: drag the two handles to choose the part, and the boxes and sliders follow. Play selection plays just that part.
