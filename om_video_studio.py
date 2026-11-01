@@ -3919,6 +3919,9 @@ def gui():
             if spec["kind"] == "image" and (not src_ or Path(src_).suffix.lower() not in IMAGE_EXT):
                 fl = (raw or {}).get("files") or []
                 src_ = fl[0] if fl and os.path.isfile(fl[0]) else ""
+            elif not src_ and spec.get("folder_one"):  # Join etc.: the Input box is empty, so the first listed clip is the picture
+                fl = (raw or {}).get("files") or []
+                src_ = fl[0] if fl and os.path.isfile(fl[0]) else ""
             return src_
         src = cur_src({"files": getters["files"]()} if "files" in getters else None)
         box = ttk.LabelFrame(frm, text="Live preview", padding=8)
