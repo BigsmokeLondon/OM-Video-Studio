@@ -1927,6 +1927,68 @@ def preview_frame(spec, opts, src, t, out_png):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Play a short sample: renders a few seconds of what an operation would do (its real settings, so you
+#  see or hear the result before running the whole job), then ffplay plays it. Only for operations in
+#  SAMPLE_OPS: effects, geometry, text and audio operations that work on one input. Operations that
+#  look at the time of the picture (title, timer, speed ramp) keep their real timeline by seeking on
+#  the OUTPUT side; everything else seeks on the input side (fast).
+SAMPLE_OPS = {"colour", "blur", "sharpen", "vdenoise", "vignette", "chroma", "vfade", "bw", "ramp", "deinterlace",
+              "resize", "crop", "rotate", "flip", "aspect", "speed", "reverse", "drawtext", "timer", "watermark",
+              "loudnorm", "volume", "tempo", "pitch", "denoise", "eq", "fade", "mix", "narration"}
+_OUT_SEEK_OPS = {"drawtext", "timer", "ramp"}
+_FROM_START_OPS = {"vfade", "fade"}
+_AUDIO_OUT = {".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma", ".mka"}
+
+
+def sample_start(spec, opts, dur, secs):
+    """Where in the file the sample should begin (seconds)."""
+    if spec["id"] in _FROM_START_OPS:
+        return 0.0
+    try:
+        if spec["id"] == "drawtext":
+            return max(0.0, tsec(opts.get("start") or "0") - 1.0)
+        if spec["id"] == "ramp":
+            return max(0.0, float(opts.get("s") or 0) - 1.0)
+    except (ValueError, TypeError):
+        pass
+    return max(0.0, min(dur / 3.0, dur - secs)) if dur else 0.0
+
+
+def make_sample(spec, opts, src, t0, secs, out_dir):
+    """Render the sample into out_dir. Returns (path, is_audio_only). Raises ValueError with a plain message."""
+    tmp = tempfile.mkdtemp(prefix="ffsamp_")
+    try:
+        c = Ctx(src, tmp, tmp)
+        j = next((x for x in spec["fn"](opts, c) if not x.get("func") and not x.get("raw_out") and x.get("out")), None)
+        if not j or "-i" not in j["args"]:
+            raise ValueError("A sample isn't available for this operation.")
+        a = list(j["args"])
+        if "-preset" in a and a.index("-preset") + 1 < len(a):
+            a[a.index("-preset") + 1] = "ultrafast"  # a sample only needs to be quick
+        if spec["id"] in _OUT_SEEK_OPS:
+            a += ["-ss", f"{t0:.3f}", "-t", f"{secs}"]
+        else:
+            if "-ss" not in a:
+                k = a.index("-i")
+                a[k:k] = ["-ss", f"{t0:.3f}", "-t", f"{secs + 1}"]  # limit the INPUT too, so Reverse doesn't load the whole clip
+            a += ["-t", f"{secs}"]
+        ext = Path(j["out"]).suffix or ".mp4"
+        out = os.path.join(out_dir, "sample" + ext)
+        if os.path.exists(out):
+            os.remove(out)
+        cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error"] + a + [out]
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240,
+                           cwd=j.get("cwd"), creationflags=NO_WINDOW)
+        if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+            tail = (r.stderr or "").strip().splitlines()[-1:] or ["unknown error"]
+            raise ValueError("Couldn't make the sample: " + tail[0][:160])
+        return out, ext.lower() in _AUDIO_OUT
+    except subprocess.SubprocessError as e:
+        raise ValueError(f"Couldn't make the sample: {e}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # Turn the chosen path (file / folder / multi-selection) into the actual list of files for this operation, honouring folder_one and kind filters.
 def resolve_files(spec, opts, path, multi=None):
     """Work out which files an operation runs on. Returns (files, opts, error_message_or_None)."""
@@ -2956,6 +3018,77 @@ def gui():
                 return
             copy_text(text, "the ffmpeg command" + (f" (for {Path(files[0]).name})" if len(files) > 1 else ""))
             log("Copied ffmpeg command:\n" + text)
+        if spec["id"] in SAMPLE_OPS and have_ff:
+            smp = {"proc": None, "busy": False, "dir": None}
+            secs_ = 10 if spec["id"] in ("loudnorm", "volume", "tempo", "pitch", "denoise", "eq", "fade", "mix", "narration") else 5
+
+            def stop_sample():
+                p_ = smp["proc"]
+                smp["proc"] = None
+                if p_ is not None and p_.poll() is None:
+                    try:
+                        p_.terminate()
+                        p_.wait(timeout=3)
+                    except (OSError, subprocess.SubprocessError):
+                        pass
+
+            def play_sample():
+                if smp["busy"]:
+                    return
+                got = collect()
+                if got is None:
+                    return
+                prep = prepare(spec, got[1], top_)
+                if prep is None:
+                    return
+                files, opts2, _outdir = prep
+                src_ = files[0]
+                ff = find_tool("ffplay") or str(Path(FFMPEG).with_name("ffplay" + (".exe" if os.name == "nt" else "")))
+                if not (os.path.exists(ff) or shutil.which(ff)):
+                    messagebox.showinfo(APP, "ffplay (the player that comes with ffmpeg) was not found, so a sample can't be played. "
+                                        "The ffmpeg that this app downloads includes it.", parent=top_)
+                    return
+                stop_sample()
+                if not smp["dir"]:
+                    smp["dir"] = tempfile.mkdtemp(prefix="ffsample_")
+                smp["busy"] = True
+                sbtn.configure(text="Making the sample…", state="disabled")
+
+                def work():
+                    path, audio, err = None, False, ""
+                    try:
+                        dur_ = float(probe(src_)["dur"] or 0)
+                        path, audio = make_sample(spec, opts2, src_, sample_start(spec, opts2, dur_, secs_), secs_, smp["dir"])
+                    except ValueError as e:
+                        err = str(e)
+                    except Exception as e:  # noqa: BLE001
+                        err = f"Couldn't make the sample: {e}"
+                    q.put(("call", lambda: finished(path, audio, err)))
+
+                def finished(path, audio, err):
+                    smp["busy"] = False
+                    if not top_.winfo_exists():
+                        return
+                    sbtn.configure(text=f"▶  Play {secs_} s sample", state="normal")
+                    if err:
+                        messagebox.showinfo(APP, err, parent=top_)
+                        return
+                    cmd = [ff, "-hide_banner", "-loglevel", "error", "-autoexit", "-window_title", "Sample - close this window to stop"]
+                    cmd += ["-nodisp"] if audio else ["-x", "960"]
+                    try:
+                        smp["proc"] = subprocess.Popen(cmd + ["-i", path], creationflags=NO_WINDOW)
+                    except OSError as e:
+                        messagebox.showinfo(APP, f"Couldn't start the player: {e}", parent=top_)
+                threading.Thread(target=work, daemon=True).start()
+
+            def sample_cleanup(e):
+                if e.widget is top_:
+                    stop_sample()
+                    if smp["dir"]:
+                        shutil.rmtree(smp["dir"], ignore_errors=True)
+            sbtn = ttk.Button(bf, text=f"▶  Play {secs_} s sample", command=play_sample)
+            sbtn.pack(side="left", padx=(0, 6))
+            top_.bind("<Destroy>", sample_cleanup, add="+")
         ttk.Button(bf, text="Copy ffmpeg command", command=copy_cmd).pack(side="left", padx=(0, 6))
         ttk.Button(bf, text="Add to queue", command=lambda: go("queue")).pack(side="left", padx=(0, 6))
         ttk.Button(bf, text="Cancel", command=top_.destroy).pack(side="left", padx=6)
