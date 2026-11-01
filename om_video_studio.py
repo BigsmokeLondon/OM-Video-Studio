@@ -43,6 +43,7 @@ Standard library only (tkinter). Needs ffmpeg + ffprobe on PATH.
 #  This file is standard-library only (tkinter + a few optional extras that the
 #  GUI imports lazily: sv_ttk, tkinterdnd2, pywinstyles, certifi).
 #  Comments in this file are explanatory only - they do not change behaviour.
+import hashlib
 import json
 import math
 import os
@@ -1786,6 +1787,44 @@ def grab_frame(path, t, out_png, vf="", box=(420, 240)):
     return r.returncode == 0 and os.path.exists(out_png) and os.path.getsize(out_png) > 0
 
 
+# Film strip for the Trim window: one PNG of small thumbnails tiled across the whole video.
+#  Cached in the temp folder (keyed by file path, date and size) so reopening is instant.
+def make_strip(path, dur, w, h, cw=560, th=48):
+    """Return (png_path, width, height) of a tiled film strip, or (None, 0, 0) if it can't be made."""
+    if dur <= 0 or w <= 0 or h <= 0:
+        return None, 0, 0
+    n = max(4, int(round(cw / max(1.0, th * w / h))))  # whole thumbnails that fill the strip width
+    tw = max(24, (cw // n) // 2 * 2)
+    th = max(28, min(84, int(round(tw * h / w / 2.0)) * 2))
+    try:
+        st_ = os.stat(path)
+        key = f"{path}|{st_.st_mtime_ns}|{st_.st_size}|{tw}|{th}|{n}"
+        d = os.path.join(tempfile.gettempdir(), "om_video_studio_strips")
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        return None, 0, 0
+    out = os.path.join(d, hashlib.md5(key.encode("utf-8", "replace")).hexdigest() + ".png")
+    if os.path.exists(out) and os.path.getsize(out) > 0:
+        sw, sh = png_size(out)
+        return (out, sw, sh) if sw else (None, 0, 0)
+    vf = (f"fps={n}/{dur:.3f},scale={tw}:{th}:force_original_aspect_ratio=decrease,"
+          f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2:color=black,tile={n}x1")
+    part = out[:-4] + ".part.png"
+    cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error"]
+    if dur > 180:
+        cmd += ["-skip_frame", "nokey"]  # long video: decode keyframes only so the strip appears quickly
+    cmd += ["-i", path, "-an", "-sn", "-vf", vf, "-frames:v", "1", part]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=240, creationflags=NO_WINDOW)
+        if r.returncode != 0 or not os.path.exists(part) or os.path.getsize(part) == 0:
+            return None, 0, 0
+        os.replace(part, out)
+    except (OSError, subprocess.SubprocessError):
+        return None, 0, 0
+    sw, sh = png_size(out)
+    return (out, sw, sh) if sw else (None, 0, 0)
+
+
 # Encoder-only ffmpeg flags (codec, CRF, preset...) that preview_frame removes from a job's arguments so a single-frame preview can be produced from the same command.
 _STRIP1 = {"-c:v", "-crf", "-preset", "-pix_fmt", "-profile:v", "-c:a", "-b:a", "-ar", "-ac", "-movflags", "-b:v", "-maxrate",
            "-bufsize", "-cq", "-rc", "-tune", "-level", "-c", "-codec", "-acodec", "-vcodec", "-b:a:0"}
@@ -3189,6 +3228,167 @@ def gui():
         from_var()
         return True
 
+    # Film strip for Trim (CapCut style): thumbnails across the whole video, a time ruler, two
+    #  draggable handles for Start and End (the parts being cut out are dimmed) and a hover
+    #  line with the time. It reads and writes the same Start/End text boxes as the sliders,
+    #  so all of them stay in sync. st["focus"] says which handle was moved last (the big
+    #  preview shows that frame).
+    def attach_strip(top_, box, tkvars, cur_src, st, q_, pw):
+        PAD, RULER, TH0 = 8, 18, 48
+        S = {"img": None, "dur": 0.0, "sw": pw - 2 * PAD, "th": TH0, "msg": "Building film strip…", "drag": None, "prev": (None, None)}
+        cv = tk.Canvas(box, width=pw, height=RULER + TH0 + 6, highlightthickness=0, bg=pal()["log_bg"], cursor="hand2")
+        cv.pack(pady=(0, 6))
+
+        def clock(t):
+            t = int(round(t))
+            return f"{t // 3600}:{t // 60 % 60:02d}:{t % 60:02d}" if t >= 3600 else f"{t // 60}:{t % 60:02d}"
+
+        def times():
+            d = S["dur"]
+            try:
+                s_ = tsec(tkvars["start"].get() or "0")
+            except ValueError:
+                s_ = 0.0
+            try:
+                et = str(tkvars["end"].get()).strip()
+                e_ = tsec(et) if et else d
+            except ValueError:
+                e_ = d
+            s_ = min(max(s_, 0.0), d)
+            e_ = min(max(e_, 0.0), d)
+            return s_, max(e_, s_)
+
+        def x_of(t):
+            return PAD + (t / S["dur"] * S["sw"] if S["dur"] > 0 else 0)
+
+        def t_of(x):
+            return min(max((x - PAD) / S["sw"] * S["dur"], 0.0), S["dur"]) if S["dur"] > 0 else 0.0
+
+        def alive():
+            try:
+                return bool(cv.winfo_exists())
+            except tk.TclError:
+                return False
+
+        def redraw(*_):
+            if not alive():
+                return
+            pl = pal()
+            cv.delete("all")
+            cv.configure(bg=pl["log_bg"])
+            d = S["dur"]
+            h_ = RULER + S["th"]
+            if d <= 0 or S["img"] is None:
+                cv.create_text(int(cv.cget("width")) // 2, h_ // 2 + 3, text=S["msg"], fill=pl["muted"])
+                return
+            cv.create_image(PAD, RULER, image=S["img"], anchor="nw")
+            step = next((s_ for s_ in (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600) if d / s_ <= 10), 7200)
+            t = 0
+            while t <= d + 1e-6:
+                x = x_of(t)
+                cv.create_line(x, RULER - 5, x, RULER, fill=pl["muted"])
+                cv.create_text(x + 2, RULER - 4, text=clock(t), anchor="sw", fill=pl["muted"], font=("TkDefaultFont", 7))
+                t += step
+            s_, e_ = times()
+            xs, xe = x_of(s_), x_of(e_)
+            cv.create_rectangle(PAD, RULER, xs, h_, fill="#000000", stipple="gray50", width=0)
+            cv.create_rectangle(xe, RULER, PAD + S["sw"], h_, fill="#000000", stipple="gray50", width=0)
+            cv.create_rectangle(xs, RULER, xe, h_, outline=BRAND_GOLD, width=2)
+            for x, side in ((xs, -1), (xe, 1)):
+                x0, x1 = (x - 8, x) if side < 0 else (x, x + 8)
+                cv.create_rectangle(x0, RULER - 2, x1, h_ + 2, fill=BRAND_GOLD, outline=BRAND_GOLD)
+                cv.create_line(x0 + 4, RULER + 10, x0 + 4, h_ - 8, fill="#5a4300")
+
+        def track(*_):
+            """Remember which handle changed last (the big preview follows it), then redraw."""
+            if S["dur"] > 0:
+                s_, e_ = times()
+                ps, pe = S["prev"]
+                if ps is not None:
+                    if abs(s_ - ps) > 1e-6:
+                        st["focus"] = "start"
+                    elif abs(e_ - pe) > 1e-6:
+                        st["focus"] = "end"
+                S["prev"] = (s_, e_)
+            redraw()
+
+        def hover(x):
+            cv.delete("hov")
+            if S["dur"] <= 0 or S["img"] is None:
+                return
+            x = min(max(x, PAD), PAD + S["sw"])
+            cv.create_line(x, RULER, x, RULER + S["th"], fill="#ffffff", tags="hov")
+            lab = fmt_ms(t_of(x))
+            cv.create_text(min(x + 4, int(cv.cget("width")) - 60), RULER + S["th"] - 8, text=lab, anchor="w", fill="#ffffff",
+                           font=("TkDefaultFont", 8, "bold"), tags="hov")
+
+        def press(e):
+            if S["dur"] <= 0 or S["img"] is None:
+                return
+            s_, e_ = times()
+            ds, de = abs(e.x - x_of(s_)), abs(e.x - x_of(e_))
+            S["drag"] = "start" if ds <= de else "end"
+            move(e)
+
+        def move(e):
+            if not S["drag"]:
+                hover(e.x)
+                return
+            t = t_of(e.x)
+            s_, e_ = times()
+            if S["drag"] == "start":
+                tkvars["start"].set(fmt_ms(min(t, max(0.0, e_ - 0.1))))
+            else:
+                t = max(t, s_ + 0.1)
+                tkvars["end"].set("" if t >= S["dur"] - 0.05 else fmt_ms(t))
+            hover(e.x)
+
+        def release(e):
+            S["drag"] = None
+
+        cv.bind("<ButtonPress-1>", press)
+        cv.bind("<B1-Motion>", move)
+        cv.bind("<ButtonRelease-1>", release)
+        cv.bind("<Motion>", lambda e: hover(e.x) if not S["drag"] else None)
+        cv.bind("<Leave>", lambda e: cv.delete("hov"))
+        for v in (tkvars["start"], tkvars["end"]):
+            v.trace_add("write", track)
+
+        def install(png, dur, sw, sh):
+            if not alive():
+                return
+            try:
+                S["img"] = tk.PhotoImage(file=png)
+            except tk.TclError:
+                S["img"] = None
+            if S["img"] is None:
+                S["msg"] = "No film strip for this file"
+            else:
+                S.update(dur=dur, sw=sw, th=sh)
+                S["prev"] = times()
+                cv.configure(width=sw + 2 * PAD, height=RULER + sh + 6)
+            redraw()
+
+        def work():
+            png, sw, sh, dur = None, 0, 0, 0.0
+            try:
+                src = cur_src()
+                if src:
+                    inf = probe(src)
+                    dur = float(inf["dur"] or 0)
+                    png, sw, sh = make_strip(src, dur, int(inf["w"] or 0), int(inf["h"] or 0), cw=pw - 2 * PAD)
+            except Exception as e:  # noqa: BLE001
+                write_log(f"film strip failed: {e!r}")
+            if png:
+                q_.put(("call", lambda: install(png, dur, sw, sh)))
+            else:
+                def fail():
+                    S["msg"] = "No film strip for this file"
+                    redraw()
+                q_.put(("call", fail))
+        redraw()
+        threading.Thread(target=work, daemon=True).start()
+
     # Live preview panel inside the dialog: fixed-size picture holders (so the window
     #  never jumps), 600 ms debounce after any change, then a worker renders frames
     #  with grab_frame/preview_frame. Shows Before/After pairs for most filters,
@@ -3204,20 +3404,27 @@ def gui():
         src = cur_src({"files": getters["files"]()} if "files" in getters else None)
         box = ttk.LabelFrame(frm, text="Live preview", padding=8)
         box.grid(row=0, column=3, rowspan=max(nrows, 4), sticky="n", padx=(18, 0))
-        names = ["Start frame", "End frame"] if spec["id"] == "trim" else (["Result of the crop"] if spec["id"] == "crop" else ["Before", "After (this is what the result will look like)"])
+        is_trim = spec["id"] == "trim"
+        PW, PH = (560, 315) if is_trim else (430, 245)  # picture slot size; Trim gets a bigger one
+        names = ["Preview (the handle you moved last)"] if is_trim else (["Result of the crop"] if spec["id"] == "crop" else ["Before", "After (this is what the result will look like)"])
         labels = []
         for nm in names:
             ttk.Label(box, text=nm, style="Muted.TLabel").pack(anchor="w")
-            hold = ttk.Frame(box, width=430, height=245)  # fixed slot so the window does not jump when a picture appears
+            hold = ttk.Frame(box, width=PW, height=PH)  # fixed slot so the window does not jump when a picture appears
             hold.pack(pady=(0, 6))
             hold.pack_propagate(False)
             lab = ttk.Label(hold, text="loading…", anchor="center")
             lab.pack(expand=True)
             labels.append(lab)
-        note = ttk.Label(box, text="", style="Muted.TLabel", wraplength=430)
-        note.pack(anchor="w")
         tmpd = tempfile.mkdtemp(prefix="ffprev_")
-        st = {"n": 0, "after": None, "imgs": []}
+        st = {"n": 0, "after": None, "imgs": [], "focus": "start"}
+        if is_trim and "start" in tkvars and "end" in tkvars:
+            try:
+                attach_strip(top_, box, tkvars, cur_src, st, q, PW)
+            except Exception as e:  # noqa: BLE001
+                write_log(f"film strip setup failed: {e!r}")
+        note = ttk.Label(box, text="", style="Muted.TLabel", wraplength=PW + 10)
+        note.pack(anchor="w")
         pair = spec["id"] not in ("trim", "crop")
 
         def work(n, raw):
@@ -3236,9 +3443,10 @@ def gui():
                         msg = "The end must be after the start."
                     else:
                         msg = f"Clip length: {e_ - s_:.1f} s  (video is {dur:.1f} s)" if dur else f"Clip length: {e_ - s_:.1f} s"
-                        for i, t in enumerate((s_, max(s_, e_ - 0.1))):
-                            f = os.path.join(tmpd, f"t{n}_{i}.png")
-                            paths.append(f if grab_frame(src, t, f) else None)
+                        t = s_ if raw.get("__focus") != "end" else max(s_, e_ - 0.1)
+                        f = os.path.join(tmpd, f"t{n}.png")
+                        paths.append(f if grab_frame(src, t, f, box=(PW - 10, PH - 5)) else None)
+                        msg += f"\nShowing the frame at {fmt_ms(t)} ({'start' if raw.get('__focus') != 'end' else 'end'} handle)"
                 elif spec["id"] != "crop":
                     t0 = dur / 3 if dur else 0
                     f0, f1 = os.path.join(tmpd, f"b{n}.png"), os.path.join(tmpd, f"a{n}.png")
@@ -3278,10 +3486,10 @@ def gui():
                 except tk.TclError:
                     loaded.append(None)
             if pair:  # same shrink factor for both so a smaller result really looks smaller
-                kk = max([1] + [max(-(-i_.width() // 420), -(-i_.height() // 240)) for i_ in loaded if i_ is not None])
+                kk = max([1] + [max(-(-i_.width() // (PW - 10)), -(-i_.height() // (PH - 5))) for i_ in loaded if i_ is not None])
                 ks = [kk] * len(loaded)
             else:
-                ks = [max(1, -(-i_.width() // 420), -(-i_.height() // 240)) if i_ is not None else 1 for i_ in loaded]
+                ks = [max(1, -(-i_.width() // (PW - 10)), -(-i_.height() // (PH - 5))) if i_ is not None else 1 for i_ in loaded]
             for lab, img, k in zip(labels, loaded, ks):
                 if img is not None and k > 1:
                     img = img.subsample(k, k)
@@ -3301,6 +3509,7 @@ def gui():
                 raw = {k: g() for k, g in getters.items()}
             except Exception:  # noqa: BLE001
                 return
+            raw["__focus"] = st["focus"]
             note.configure(text="Updating…")
             threading.Thread(target=work, args=(st["n"], raw), daemon=True).start()
 
@@ -3310,7 +3519,7 @@ def gui():
                     top_.after_cancel(st["after"])
                 except tk.TclError:
                     pass
-            st["after"] = top_.after(600, kick)
+            st["after"] = top_.after(200 if is_trim else 600, kick)
 
         def cleanup(e):
             if e.widget is top_:
