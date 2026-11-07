@@ -3502,3 +3502,23 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Lütfen önce bir girdi dosyası veya klasörü seçin.\n\nDosyalara göz at..., Toplu klasör... kullanın veya bir dosyayı bu pencereye sürükleyin.',
     },
 }
+
+
+# --- GPU controls (added with hardware-encoder support) ---
+_GPU_TR = {
+    "ur": ("GPU چیک کریں", "GPU نہیں", "GPU استعمال کریں ({})"),
+    "bn": ("GPU পরীক্ষা করুন", "GPU নেই", "GPU ব্যবহার করুন ({})"),
+    "ne": ("GPU जाँच गर्नुहोस्", "GPU छैन", "GPU प्रयोग गर्नुहोस् ({})"),
+    "ar": ("فحص GPU", "لا توجد GPU", "استخدام GPU ({})"),
+    "ru": ("Проверить GPU", "Нет GPU", "Использовать GPU ({})"),
+    "hi": ("GPU जाँचें", "GPU नहीं", "GPU का उपयोग करें ({})"),
+    "pa": ("GPU ਜਾਂਚੋ", "GPU ਨਹੀਂ", "GPU ਵਰਤੋ ({})"),
+    "es": ("Comprobar GPU", "Sin GPU", "Usar GPU ({})"),
+    "fr": ("Vérifier le GPU", "Pas de GPU", "Utiliser le GPU ({})"),
+    "de": ("GPU prüfen", "Keine GPU", "GPU verwenden ({})"),
+    "pt": ("Verificar GPU", "Sem GPU", "Usar GPU ({})"),
+    "it": ("Controlla GPU", "Nessuna GPU", "Usa GPU ({})"),
+    "tr": ("GPU'yu denetle", "GPU yok", "GPU kullan ({})"),
+}
+for _c, (_a, _b, _d) in _GPU_TR.items():
+    TR[_c].update({"Check GPU": _a, "No GPU": _b, "Use GPU ({})": _d})
