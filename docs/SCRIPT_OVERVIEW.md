@@ -1,12 +1,13 @@
 # `om_video_studio.py` - brief
 
-The whole application in one file (~3,600 lines, mostly standard library). It is a tkinter window that builds and runs **ffmpeg** command lines for the user. This brief explains how the file is organised and how a click becomes a finished video. The source itself is also commented section by section.
+The whole application in one file (~5,000 lines, of which a few are very long embedded base64 images, mostly standard library). It is a tkinter window that builds and runs **ffmpeg** command lines for the user. This brief explains how the file is organised and how a click becomes a finished video. The source itself is also commented section by section.
 
 Run modes:
 
 ```
 python om_video_studio.py              # open the GUI
 python om_video_studio.py --list       # print all 70 operations
+python om_video_studio.py --docshots out_folder   # Windows: screenshot every tool dialog (for the illustrated guide)
 python om_video_studio.py --selftest   # run every operation on a generated clip (headless)
 python om_video_studio.py --selftest trim,split,extras   # only these (CI uses this)
 ```
@@ -27,7 +28,7 @@ click -> option dialog -> collect()/convert_opts() -> execute()
 | 1 | Constants & paths | `APP`, `VERSION` (CI reads this line to name the release), file-extension sets, `STATE` (GPU flag), `FROZEN` / `APP_DIR` / `RES_DIR` / `DATA_DIR` (source vs installed `.exe`), `SETTINGS_PATH` (`~/.om_video_studio.json`) |
 | 2 | ffmpeg location & install | `find_tool` (PATH first, then the app's own download), `FFMPEG`/`FFPROBE`, `urlopen_robust` (system then certifi certificates), `download_file`, `install_ffmpeg` |
 | 3 | Log | `write_log` -> `om_video_studio_log.txt` (trimmed ~1 MB), `_excepthook` for uncaught errors |
-| 4 | Helpers | `tsec` (time parser), `probe` (ffprobe -> dict), `summary`, `vcodec` (CPU x264 or NVENC), `AAC`/`aargs`, `atempo` (chains for big speed factors), `Ctx` (per-file info + non-clashing output names), `job` |
+| 4 | Helpers | `tsec` (time parser), `probe` (ffprobe -> dict), `summary`, `vcodec` (CPU x264 or the detected hardware encoder from `GPU_ENCODERS`), `AAC`/`aargs`, `atempo` (chains for big speed factors), `Ctx` (per-file info + non-clashing output names), `job` |
 | 5 | Registry | `OPS`, `O()` (option descriptor: text/int/float/bool/choice/file/files), `register`, `@op` |
 | 6 | Operations | 70 builders in 9 categories (below) |
 | 7 | Engine | `default_opts`, `kind_ok`/`kind_exts`, `job_cmd`, `run_job`, `output_paths`, `execute`, `convert_opts` |
@@ -35,7 +36,7 @@ click -> option dialog -> collect()/convert_opts() -> execute()
 | 9 | Settings & start-up sound | `load_settings`, `save_settings`, `play_startup_sound` |
 | 10 | Languages | `LANGS`/`TR` from `om_translations.py`, `set_lang`, `tr` |
 | 11 | Completion pings | `_tone_wav`, `SOUNDS`, `sound_file`, `play_ping`, `ping_kind` |
-| 12 | GUI | `detect_gpu`, `CAT_ICONS`, `PALETTE`, `gui()` - the entire window |
+| 12 | GUI | `detect_gpu` (real test encode per vendor), `gpu_report` (Check GPU text), `LOGO_B64` / `SPLASH_B64`, `TOOL_DOCS` / `CAT_DOCS`, `show_about`, `run_docshots`, `CAT_ICONS`, `PALETTE`, `gui()` - the entire window |
 | 13 | Self-test & CLI | `selftest_extras`, `selftest`, `__main__` dispatch |
 
 ### The 70 operations
@@ -57,7 +58,7 @@ Option dialogs are generated from each operation's option list, so adding an ope
 ## The engine in detail
 
 - `run_job` starts ffmpeg with `-progress pipe:1`, turns `out_time_us` into a 0-1 progress value, supports cancel (kills the process), and decides what to print: all matching lines for detectors (`show` regex), the last N lines (`tail`), or a short tail on success.
-- `execute` runs one operation over many files with a scratch folder, per-file error isolation, a "does this file suit this operation" check, and a **GPU fallback**: if NVENC fails it switches to CPU and retries once. Failures write the full command and ffmpeg output to the log.
+- `execute` runs one operation over many files with a scratch folder, per-file error isolation, a "does this file suit this operation" check, and a **GPU fallback**: if the hardware encoder (NVENC, AMF, QSV or VideoToolbox) fails it switches to CPU and retries once. Failures write the full command and ffmpeg output to the log.
 - Outputs are never overwritten: `Ctx.out()` appends `_2`, `_3`... if a name exists.
 
 ## The GUI (`gui()`)

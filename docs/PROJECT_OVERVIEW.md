@@ -16,7 +16,8 @@ OM-Video-Studio/
 |-- .github/workflows/
 |   `-- release.yml           CI: test, build, package, publish a GitHub release
 |-- docs/
-|   |-- images/               Screenshots + demo.gif used by README
+|   |-- ABOUT.md              Illustrated guide: a screenshot + description of every tool (opened by the app's About button)
+|   |-- images/               Screenshots + demo.gif used by README; images/tools/ = one dialog picture per tool
 |   |-- videos/               Install, quick-tour and full-walkthrough videos (+ README.md)
 |   |-- SCRIPT_OVERVIEW.md    Brief on om_video_studio.py
 |   `-- PROJECT_OVERVIEW.md   This file
@@ -86,6 +87,23 @@ Problems are written to `om_video_studio_log.txt`; ask users to send it when rep
 | 1.5.0 | Resize dropdown 144p-8K with preview sizes |
 | 1.6.0 | 13 languages, completion pings with Sound toggle |
 | 1.6.1 | Full file report saved as a `.txt` and opened in Notepad |
+| 1.7.0 | macOS builds (experimental, Apple Silicon and Intel zips) |
+| 1.8.0 - 1.12.0 | Trim film strip with draggable handles, smoother frame cache, Play selection, Play sample, film strip in more tools |
+| 1.13.0 | Stretchable previews everywhere, Preview-at slider |
+| 1.14.0 | Clip timeline for Join and Crossfade |
+| 1.15.0 | Automatic GPU encoding (NVIDIA / AMD / Intel / Apple) with CPU fallback and a Check GPU button; O.M. Industries Inc branding (header logo, colour splash screen); About window and illustrated guide |
+
+## GPU encoding (1.15.0)
+
+`detect_gpu()` runs a real 0.2 s test encode with each hardware H.264 encoder (`h264_nvenc`, `h264_amf`, `h264_qsv`, `h264_videotoolbox`) and the first that succeeds is used (`STATE["gpu"]`, `STATE["gpu_enc"]`); the **Use GPU** box defaults on when one is found. `execute()` retries once on the CPU if the encoder's name shows in ffmpeg's error. The **Check GPU** button shows `gpu_report()`: the graphics cards Windows can see plus the result of each encoder test. Listing an encoder in `ffmpeg -encoders` does not prove a usable card, which is why the test encode exists. The development PC is a Hyper-V VM with no GPU, so GPU encoding must be tested on a physical machine (the user's NVIDIA Quadro P2000).
+
+## Branding and splash
+
+The header band is dark navy in both themes, so a white logo is used there; a colour badge is shown on the splash screen (about 2 s) and in the About window. Both images are embedded as base64 (`LOGO_B64`, `SPLASH_B64`) because the app uses plain tkinter with no PIL. The logo artwork was drawn as SVG (fontTools outlines, rendered with Chromium); the originals and variants live outside the repo.
+
+## About window and illustrated guide
+
+The About button (`show_about()`) lists every category and tool from `TOOL_DOCS` / `CAT_DOCS` (70 + 9 descriptions in `om_video_studio.py`) and has a button that opens `docs/ABOUT.md` on GitHub (`ABOUT_URL`). To regenerate the pictures run `python om_video_studio.py --docshots <folder>` on Windows: the app opens each tool's dialog with clean default settings and saves a native-resolution PNG named by tool id. The guide page is built from those PNGs plus `TOOL_DOCS` and the option lists. Edit a description in `TOOL_DOCS`, rerun, and rebuild the page.
 
 ## Where to change what
 
@@ -96,7 +114,10 @@ Problems are written to `om_video_studio_log.txt`; ask users to send it when rep
 | Change the look | `PALETTE`, `apply_styles` in `gui()` |
 | Change what the installer does | `installer/setup.iss` |
 | Change how releases are built | `.github/workflows/release.yml` (and `build.bat` to match) |
-| Change the public page | `README.md`, `docs/images`, `docs/videos` |
+| Change the public page | `README.md`, `docs/images`, `docs/videos`, `docs/ABOUT.md` |
+| Change the logo or splash | `LOGO_B64` / `SPLASH_B64` (base64 PNGs) and the header / `show_about()` code |
+| Change a tool's About text | `TOOL_DOCS` / `CAT_DOCS` |
+| Add a hardware encoder | `GPU_ENCODERS` (label, codec, tag, `args`) |
 | Release a new version | bump `VERSION`, push to `main` |
 
 Related brief: [`SCRIPT_OVERVIEW.md`](SCRIPT_OVERVIEW.md) covers the Python file in depth.
