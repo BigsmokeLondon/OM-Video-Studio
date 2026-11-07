@@ -71,8 +71,9 @@ AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
 SUB_EXT = {".srt", ".ass", ".vtt"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 # STATE is process-wide mutable switches. "gpu" is toggled by the GPU checkbox
-#  and read by vcodec(); execute() flips it back to False if NVENC fails.
-STATE = {"gpu": False}
+#  and read by vcodec(); execute() flips it back to False if the GPU encoder fails.
+#  "gpu_enc" is which hardware encoder detect_gpu() found (a key of GPU_ENCODERS).
+STATE = {"gpu": False, "gpu_enc": "nvenc"}
 # On Windows, stops a black console window flashing for every ffmpeg/ffprobe call.
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # Path logic - two modes:
@@ -360,10 +361,24 @@ def summary(info, path):
     return "  |  ".join(parts)
 
 
-# H.264 encoder arguments. CPU path = libx264 veryfast + CRF; GPU path = NVIDIA NVENC with constant-quality VBR. yuv420p keeps output playable everywhere.
+# Hardware H.264 encoders, in the order detect_gpu() tries them. tag = text that shows up in ffmpeg's error output for that encoder (used to decide a failure was the GPU's fault). args(crf) = quality-based settings matching the CPU CRF as closely as each encoder allows.
+GPU_ENCODERS = {
+    "nvenc": dict(label="NVIDIA NVENC", codec="h264_nvenc", tag=("nvenc", "nvcuda", "cuda"),
+                  args=lambda crf: ["-preset", "p5", "-rc", "vbr", "-cq", str(crf), "-b:v", "0", "-pix_fmt", "yuv420p"]),
+    "amf": dict(label="AMD AMF", codec="h264_amf", tag=("amf",),
+                args=lambda crf: ["-quality", "balanced", "-rc", "cqp", "-qp_i", str(crf), "-qp_p", str(crf), "-qp_b", str(crf), "-pix_fmt", "yuv420p"]),
+    "qsv": dict(label="Intel Quick Sync", codec="h264_qsv", tag=("qsv", "mfx", "libvpl"),
+                args=lambda crf: ["-preset", "medium", "-global_quality", str(crf)]),
+    "videotoolbox": dict(label="Apple VideoToolbox", codec="h264_videotoolbox", tag=("videotoolbox",),
+                         args=lambda crf: ["-q:v", str(max(1, min(100, round(100 - crf * 2.2)))), "-pix_fmt", "yuv420p"]),
+}
+
+
+# H.264 encoder arguments. CPU path = libx264 veryfast + CRF; GPU path = whichever hardware encoder was detected (NVIDIA, AMD, Intel or Apple). yuv420p keeps output playable everywhere.
 def vcodec(crf=20):
     if STATE["gpu"]:
-        return ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", str(crf), "-b:v", "0", "-pix_fmt", "yuv420p"]
+        enc = GPU_ENCODERS[STATE["gpu_enc"]]
+        return ["-c:v", enc["codec"]] + enc["args"](crf)
     return ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf), "-pix_fmt", "yuv420p"]
 
 
@@ -1643,10 +1658,11 @@ def execute(spec, opts, files, outdir, log, progress, cancel, show_cmd=False):
                 if good:
                     outputs.extend(new_outs)
                     break
-                if attempt == 1 and STATE["gpu"] and not cancel.is_set() and any("nvenc" in x.lower() for x in cap):
+                enc_ = GPU_ENCODERS[STATE["gpu_enc"]]
+                if attempt == 1 and STATE["gpu"] and not cancel.is_set() and any(t_ in x.lower() for x in cap for t_ in enc_["tag"]):
                     STATE["gpu"] = False
-                    write_log(f"NVENC failed for '{spec['id']}' on {Path(f).name}; switched to CPU. ffmpeg said:\n" + "\n".join(cap[-15:]))
-                    log("The GPU encoder (NVENC) failed on this computer, so I switched to CPU encoding and am retrying. "
+                    write_log(f"{enc_['label']} failed for '{spec['id']}' on {Path(f).name}; switched to CPU. ffmpeg said:\n" + "\n".join(cap[-15:]))
+                    log(f"The GPU encoder ({enc_['label']}) failed on this computer, so I switched to CPU encoding and am retrying. "
                         "(GPU stays off until you restart the app.)")
                     try:
                         jobs = spec["fn"](opts, c)
@@ -2296,19 +2312,25 @@ def ping_kind(ok, fail, batch):
     return "error" if fail and not ok else ("batch" if batch else "job")
 
 
-# Checks that this ffmpeg lists h264_nvenc AND can actually encode a tiny test clip with it, so the GPU checkbox is only enabled when it will really work.
+# Looks for a hardware H.264 encoder that this ffmpeg lists AND can really use here (a tiny test encode must succeed), trying NVIDIA, AMD, Intel, then Apple. Returns the GPU_ENCODERS key, or None (CPU only).
 def detect_gpu():
     try:
         r = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, encoding="utf-8",
                            errors="replace", creationflags=NO_WINDOW)
-        if "h264_nvenc" not in r.stdout:
-            return False
-        t = subprocess.run([FFMPEG, "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=320x240:d=0.2",
-                            "-c:v", "h264_nvenc", "-f", "null", os.devnull], capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", creationflags=NO_WINDOW, timeout=30)
-        return t.returncode == 0  # only offer the GPU option if a real test encode works
     except Exception:
-        return False
+        return None
+    for key, enc in GPU_ENCODERS.items():
+        if enc["codec"] not in r.stdout:
+            continue
+        try:
+            t = subprocess.run([FFMPEG, "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=640x360:d=0.2",
+                                "-c:v", enc["codec"]] + enc["args"](23) + ["-f", "null", os.devnull], capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW, timeout=30)
+            if t.returncode == 0:  # only offer the GPU option if a real test encode works
+                return key
+        except Exception:
+            continue
+    return None
 
 
 # --- 12. GUI ------------------------------------------------------------------
@@ -2529,10 +2551,13 @@ def gui():
     q = queue.Queue()
     cancel = threading.Event()
     have_ff = refresh_tools()
-    gpu_available = have_ff and detect_gpu()
+    gpu_key = detect_gpu() if have_ff else None
+    gpu_available = gpu_key is not None
+    if gpu_key:
+        STATE["gpu_enc"] = gpu_key
     path_var = tk.StringVar()
     out_var = tk.StringVar(value=settings.get("outdir", ""))
-    gpu_var = tk.BooleanVar(value=bool(gpu_available))  # GPU on by default when a real NVENC test encode works; CPU otherwise
+    gpu_var = tk.BooleanVar(value=bool(gpu_available))  # GPU on by default when a real hardware test encode works; CPU otherwise
     STATE["gpu"] = bool(gpu_available)
     cmd_var = tk.BooleanVar(value=False)
     info_var = tk.StringVar(value="Choose a file or a folder to begin.")
@@ -2687,7 +2712,7 @@ def gui():
     ttk.Button(row, text="Copy last command", command=lambda: copy_last()).pack(side="left", padx=6)
     ttk.Checkbutton(row, text="Show ffmpeg commands", variable=cmd_var).pack(side="left", padx=10)
     if gpu_available:
-        ttk.Checkbutton(row, text="Use GPU (NVENC)", variable=gpu_var, command=lambda: STATE.update(gpu=gpu_var.get())).pack(side="left")
+        ttk.Checkbutton(row, text=f"Use GPU ({GPU_ENCODERS[gpu_key]['label']})", variable=gpu_var, command=lambda: STATE.update(gpu=gpu_var.get())).pack(side="left")
     snd_var = tk.BooleanVar(value=settings.get("sounds", True))
 
     # Sound checkbox: persist setting and play a sample ping when switched on.

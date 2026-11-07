@@ -66,7 +66,7 @@ Prefer no installer? Download `OM-Video-Studio-Portable.zip`, unzip anywhere and
 
 Test files (two short clips and a photo, copyright-free) are in [docs/test-media](docs/test-media). Testing the Mac version? A step-by-step guide with a tick chart is in [docs/OM_Video_Studio_Mac_Tester_Guide.pdf](docs/OM_Video_Studio_Mac_Tester_Guide.pdf) (also [.docx](docs/OM_Video_Studio_Mac_Tester_Guide.docx)). Developer notes: [script brief](docs/SCRIPT_OVERVIEW.md) and [project overview](docs/PROJECT_OVERVIEW.md).
 
-Mac notes: the GPU checkbox stays off (NVENC is NVIDIA-only), and Windows-only touches (title-bar colour) are skipped. Please report anything odd - include the log file at `~/Library/Application Support/O.M. Video Studio/om_video_studio_log.txt`.
+Mac notes: the GPU checkbox uses Apple VideoToolbox when it works, and Windows-only touches (title-bar colour) are skipped. Please report anything odd - include the log file at `~/Library/Application Support/O.M. Video Studio/om_video_studio_log.txt`.
 
 ## Videos
 
