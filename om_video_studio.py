@@ -2625,7 +2625,7 @@ def gui():
         logo_img = tk.PhotoImage(data=LOGO_B64["2x" if hi_dpi else "1x"])
         logo_lbl = tk.Label(header, image=logo_img, bg=BRAND_BG, bd=0)
         logo_lbl.image = logo_img  # keep a reference or tk drops the picture
-        logo_lbl.place(relx=0.5, rely=0.5, anchor="center")  # truly centred in the window, not just between the two side blocks
+        logo_lbl.pack(side="right", padx=(0, 28), pady=6)  # sits just left of the Light mode / language block
         tk.Frame(header, width=1, height=logo_img.height() + 18, bg=BRAND_BG).pack(side="left")  # keeps the band tall enough for the logo
     except Exception:  # noqa: BLE001 - the header simply stays without a logo
         pass
