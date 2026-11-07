@@ -4599,6 +4599,10 @@ def gui():
         srt.write_text("1\n00:00:01,000 --> 00:00:04,000\nHello from O.M. Video Studio\n\n2\n00:00:05,000 --> 00:00:08,000\nSample subtitle\n", encoding="utf-8")
         for nm in ("showinfo", "showwarning", "showerror", "askyesno", "askokcancel", "askyesnocancel"):
             setattr(messagebox, nm, lambda *a, **k: True)
+        # Clean slate so the pictures show the real defaults, not this PC's last-used values, favourites or folders.
+        settings["last"], settings["favs"], settings["recent"] = {}, [], []
+        globals()["save_settings"] = lambda *a, **k: None
+        out_var.set("C:\\Users\\You\\Videos\\Edited")
 
         user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
         user32.GetDC.restype, user32.GetDC.argtypes = wintypes.HDC, [wintypes.HWND]
