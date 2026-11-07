@@ -11,6 +11,8 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
+**New in 1.15.0:** **Uses your graphics card automatically.** NVIDIA, AMD, Intel and Apple hardware encoders are detected at start-up and used when found, with an automatic fall back to the CPU. A **Check GPU** button shows what was found and a **Use GPU** box turns it off. **New look:** the company is now O.M. Industries Inc, with a new logo in the header and a colour splash screen. **About button:** lists every tool with a description, and opens the [illustrated guide](docs/ABOUT.md) with a screenshot of every tool.
+
 **New in 1.14.0:** **Clip timeline for Join clips and Join with crossfade.** Every clip shows as a block in order, with its first frame, name and length. Drag a block to change the order, and see the total length (with the crossfade overlaps taken off). The previews now show the first clip and the one that follows it, even when the Input box is empty.
 
 **New in 1.13.0:** **Bigger, scrubbable previews everywhere.** Every window with a preview can now be stretched (the pictures grow with it), and the Before/After and Crop previews have a **Preview at** slider, so you can check an effect at any moment in the video.
