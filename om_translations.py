@@ -3522,3 +3522,23 @@ _GPU_TR = {
 }
 for _c, (_a, _b, _d) in _GPU_TR.items():
     TR[_c].update({"Check GPU": _a, "No GPU": _b, "Use GPU ({})": _d})
+
+
+# --- About window ---
+_ABOUT_TR = {
+    "ur": ("تعارف", "تصویری گائیڈ کھولیں", "GitHub صفحہ"),
+    "bn": ("সম্পর্কে", "ছবিসহ গাইড খুলুন", "GitHub পাতা"),
+    "ne": ("बारेमा", "चित्रसहितको गाइड खोल्नुहोस्", "GitHub पृष्ठ"),
+    "ar": ("حول", "فتح الدليل المصوّر", "صفحة GitHub"),
+    "ru": ("О программе", "Открыть руководство с картинками", "Страница GitHub"),
+    "hi": ("परिचय", "सचित्र गाइड खोलें", "GitHub पेज"),
+    "pa": ("ਬਾਰੇ", "ਤਸਵੀਰਾਂ ਵਾਲੀ ਗਾਈਡ ਖੋਲ੍ਹੋ", "GitHub ਪੰਨਾ"),
+    "es": ("Acerca de", "Abrir la guía ilustrada", "Página de GitHub"),
+    "fr": ("À propos", "Ouvrir le guide illustré", "Page GitHub"),
+    "de": ("Info", "Bebilderte Anleitung öffnen", "GitHub-Seite"),
+    "pt": ("Sobre", "Abrir o guia ilustrado", "Página do GitHub"),
+    "it": ("Informazioni", "Apri la guida illustrata", "Pagina GitHub"),
+    "tr": ("Hakkında", "Resimli kılavuzu aç", "GitHub sayfası"),
+}
+for _c, (_a, _b, _d) in _ABOUT_TR.items():
+    TR[_c].update({"About": _a, "Open the illustrated guide": _b, "GitHub page": _d})
