@@ -2532,7 +2532,8 @@ def gui():
     gpu_available = have_ff and detect_gpu()
     path_var = tk.StringVar()
     out_var = tk.StringVar(value=settings.get("outdir", ""))
-    gpu_var = tk.BooleanVar(value=False)
+    gpu_var = tk.BooleanVar(value=bool(gpu_available))  # GPU on by default when a real NVENC test encode works; CPU otherwise
+    STATE["gpu"] = bool(gpu_available)
     cmd_var = tk.BooleanVar(value=False)
     info_var = tk.StringVar(value="Choose a file or a folder to begin.")
     status_var = tk.StringVar(value=tr("Ready"))
