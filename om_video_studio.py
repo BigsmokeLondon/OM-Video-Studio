@@ -2333,6 +2333,46 @@ def detect_gpu():
     return None
 
 
+# Plain-English report for the "Check GPU" button: which graphics cards Windows sees, and for each hardware encoder whether this ffmpeg has it and whether a real test encode works. Returns (text, working_key_or_None).
+def gpu_report():
+    lines, found = [], None
+    if sys.platform == "win32":
+        try:
+            r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                "Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }"],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               creationflags=NO_WINDOW, timeout=20)
+            cards = [x.strip() for x in r.stdout.splitlines() if x.strip()]
+            lines.append("Graphics cards Windows can see:\n  " + ("\n  ".join(cards) if cards else "none found"))
+        except Exception:
+            lines.append("Graphics cards Windows can see: could not check")
+    try:
+        enc_list = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", creationflags=NO_WINDOW).stdout
+    except Exception as e:  # noqa: BLE001
+        return f"Could not run ffmpeg: {e}", None
+    lines.append("\nHardware encoders (a real 0.2 s test encode is tried for each):")
+    for key, enc in GPU_ENCODERS.items():
+        if enc["codec"] not in enc_list:
+            lines.append(f"  {enc['label']}: not in this ffmpeg build")
+            continue
+        try:
+            t = subprocess.run([FFMPEG, "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=640x360:d=0.2",
+                                "-c:v", enc["codec"]] + enc["args"](23) + ["-f", "null", os.devnull], capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW, timeout=30)
+            if t.returncode == 0:
+                lines.append(f"  {enc['label']}: WORKS")
+                found = found or key
+            else:
+                why = (t.stderr.strip().splitlines() or ["failed"])[0][:110]
+                lines.append(f"  {enc['label']}: no card / driver here ({why})")
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"  {enc['label']}: test failed ({e})")
+    lines.append("\n" + (f"Result: {GPU_ENCODERS[found]['label']} will be used." if found else
+                          "Result: no usable GPU encoder, so the CPU will be used (slower, but everything still works)."))
+    return "\n".join(lines), found
+
+
 # --- 12. GUI ------------------------------------------------------------------
 #  The entire interface lives inside gui(). Widgets and handlers are closures
 #  sharing local state, which keeps the module namespace clean and lets the file
@@ -2711,8 +2751,37 @@ def gui():
     queue_btn.pack(side="left")
     ttk.Button(row, text="Copy last command", command=lambda: copy_last()).pack(side="left", padx=6)
     ttk.Checkbutton(row, text="Show ffmpeg commands", variable=cmd_var).pack(side="left", padx=10)
-    if gpu_available:
-        ttk.Checkbutton(row, text=f"Use GPU ({GPU_ENCODERS[gpu_key]['label']})", variable=gpu_var, command=lambda: STATE.update(gpu=gpu_var.get())).pack(side="left")
+    gpu_cb = ttk.Checkbutton(row, text=(f"Use GPU ({GPU_ENCODERS[gpu_key]['label']})" if gpu_available else "No GPU (CPU)"),
+                             variable=gpu_var, command=lambda: STATE.update(gpu=gpu_var.get()),
+                             state=("normal" if gpu_available else "disabled"))
+    gpu_cb.pack(side="left")
+
+    # "Check GPU" button: re-runs detection (e.g. after installing a driver), shows the details, and enables/updates the checkbox.
+    def check_gpu():
+        if not refresh_tools():
+            messagebox.showinfo("Check GPU", "ffmpeg was not found, so the GPU cannot be tested yet.")
+            return
+        gpu_btn.configure(state="disabled", text="Checking...")
+
+        def work():
+            text, key = gpu_report()
+            root.after(0, lambda: done(text, key))
+
+        def done(text, key):
+            gpu_btn.configure(state="normal", text="Check GPU")
+            if key:
+                STATE["gpu_enc"] = key
+                gpu_cb.configure(text=f"Use GPU ({GPU_ENCODERS[key]['label']})", state="normal")
+                gpu_var.set(True)
+                STATE["gpu"] = True
+            else:
+                gpu_cb.configure(text="No GPU (CPU)", state="disabled")
+                gpu_var.set(False)
+                STATE["gpu"] = False
+            messagebox.showinfo("Check GPU", text)
+        threading.Thread(target=work, daemon=True).start()
+    gpu_btn = ttk.Button(row, text="Check GPU", command=check_gpu)
+    gpu_btn.pack(side="left", padx=6)
     snd_var = tk.BooleanVar(value=settings.get("sounds", True))
 
     # Sound checkbox: persist setting and play a sample ping when switched on.
