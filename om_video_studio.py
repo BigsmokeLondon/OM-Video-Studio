@@ -2750,8 +2750,8 @@ def gui():
     queue_btn = ttk.Button(row, text="Queue (0)", command=lambda: open_queue())
     queue_btn.pack(side="left")
     ttk.Button(row, text="Copy last command", command=lambda: copy_last()).pack(side="left", padx=6)
-    ttk.Checkbutton(row, text="Show ffmpeg commands", variable=cmd_var).pack(side="left", padx=10)
-    gpu_cb = ttk.Checkbutton(row, text=(f"Use GPU ({GPU_ENCODERS[gpu_key]['label']})" if gpu_available else "No GPU (CPU)"),
+    ttk.Checkbutton(row, text="Show ffmpeg commands", variable=cmd_var).pack(side="left", padx=4)
+    gpu_cb = ttk.Checkbutton(row, text=(f"Use GPU ({GPU_ENCODERS[gpu_key]['label']})" if gpu_available else "No GPU"),
                              variable=gpu_var, command=lambda: STATE.update(gpu=gpu_var.get()),
                              state=("normal" if gpu_available else "disabled"))
     gpu_cb.pack(side="left")
@@ -2775,13 +2775,13 @@ def gui():
                 gpu_var.set(True)
                 STATE["gpu"] = True
             else:
-                gpu_cb.configure(text="No GPU (CPU)", state="disabled")
+                gpu_cb.configure(text="No GPU", state="disabled")
                 gpu_var.set(False)
                 STATE["gpu"] = False
             messagebox.showinfo("Check GPU", text)
         threading.Thread(target=work, daemon=True).start()
     gpu_btn = ttk.Button(row, text="Check GPU", command=check_gpu)
-    gpu_btn.pack(side="left", padx=6)
+    gpu_btn.pack(side="left", padx=2)
     snd_var = tk.BooleanVar(value=settings.get("sounds", True))
 
     # Sound checkbox: persist setting and play a sample ping when switched on.
@@ -2792,7 +2792,7 @@ def gui():
             play_ping("job")
     ttk.Checkbutton(row, text="Sound", variable=snd_var, command=toggle_sound).pack(side="left", padx=10)
     ttk.Button(row, text="A+", width=4, command=lambda: set_fsize(1)).pack(side="right")
-    ttk.Button(row, text="A-", width=4, command=lambda: set_fsize(-1)).pack(side="right", padx=(12, 4))
+    ttk.Button(row, text="A-", width=4, command=lambda: set_fsize(-1)).pack(side="right", padx=(4, 2))
     ttk.Label(row, text="Text size:").pack(side="right")
     logbox = tk.Text(bot, height=7, wrap="word", font=f_mono, state="disabled", relief="flat", borderwidth=0, padx=8, pady=6)
     logbox.pack(fill="x")
