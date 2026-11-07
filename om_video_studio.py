@@ -2435,7 +2435,7 @@ def gui():
     dnd = root is not None
     if root is None:
         root = tk.Tk()
-    root.title(f"{APP}  -  M.A. Industries Inc")
+    root.title(f"{APP}  -  O.M. Industries Inc")
     root.geometry("1280x900")
     root.minsize(1020, 700)
 

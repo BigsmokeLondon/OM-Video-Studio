@@ -7,7 +7,7 @@
 AppId={{6B0F6C3E-2A57-4D0B-9C1E-0A4E7F3B1D52}
 AppName=O.M. Video Studio
 AppVersion={#AppVersion}
-AppPublisher=M.A. Industries Inc
+AppPublisher=O.M. Industries Inc
 DefaultDirName={autopf}\O.M. Video Studio
 DefaultGroupName=O.M. Video Studio
 UninstallDisplayIcon={app}\OM-Video-Studio.exe

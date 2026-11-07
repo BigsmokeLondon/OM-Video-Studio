@@ -1,6 +1,6 @@
 # O.M. Video Studio - project overview
 
-A Windows desktop app that puts a friendly point-and-click interface on **ffmpeg**: choose a file, press a tool, set a few options, run. Python + tkinter, shipped as a normal installer. Repo: <https://github.com/BigsmokeLondon/OM-Video-Studio> (publisher: M.A. Industries Inc).
+A Windows desktop app that puts a friendly point-and-click interface on **ffmpeg**: choose a file, press a tool, set a few options, run. Python + tkinter, shipped as a normal installer. Repo: <https://github.com/BigsmokeLondon/OM-Video-Studio> (publisher: O.M. Industries Inc).
 
 ## What is in the repository
 
