@@ -2405,9 +2405,9 @@ TOOL_ICONS = {"trim": "\u2702", "join": "\U0001F517", "split": "\u2797", "speed"
 # Light and dark colour sets; BRAND_* are the accent colours used for headers and the primary button.
 PALETTE = {
     "light": dict(bg="#fafafa", fg="#1a1a1a", muted="#666666", log_bg="#ffffff", log_fg="#202020", sel="#cfe3ff",
-                  panel="#ffffff", border="#d9dde3", chip="#eceff3", hover="#f1f5fb", side_sel="#fff3d3"),
+                  panel="#ffffff", border="#d9dde3", chip="#eceff3", hover="#f1f5fb", side_sel="#fff3d3", brand="#0f2a47", gold="#f4be46"),
     "dark": dict(bg="#1c1c1c", fg="#f0f0f0", muted="#a6a6a6", log_bg="#141414", log_fg="#e6e6e6", sel="#33507a",
-                 panel="#252a31", border="#373d46", chip="#303741", hover="#2e353f", side_sel="#3a3220"),
+                 panel="#252a31", border="#373d46", chip="#303741", hover="#2e353f", side_sel="#3a3220", brand="#0f2a47", gold="#f4be46"),
 }
 BRAND_BG, BRAND_FG, BRAND_GOLD = "#0f2a47", "#ffffff", "#f4be46"
 # White one-colour O.M. Industries logo (transparent PNG, base64) for the header band. 1x = normal screens, 2x = high-DPI. tk.PhotoImage reads PNG natively, so no extra libraries are needed.
@@ -2851,10 +2851,12 @@ def gui():
     def flat_btn(parent, text, command, kind="ghost", font=None):
         if kind == "gold":
             b = tk.Label(parent, text=text, font=font or f_bold, bg=GOLD, fg=ON_GOLD, padx=18, pady=9, cursor="hand2")
+            reg(b, bg="gold")
             b.bind("<Enter>", lambda e: b.configure(bg=GOLD_HOVER))
             b.bind("<Leave>", lambda e: b.configure(bg=GOLD))
         elif kind == "hdr":
             b = tk.Label(parent, text=text, font=font or f_base, bg=BRAND_BG, fg="#c9d6e6", padx=12, pady=7, cursor="hand2")
+            reg(b, bg="brand")
             b.bind("<Enter>", lambda e: b.configure(bg="#1d4470", fg="#ffffff"))
             b.bind("<Leave>", lambda e: b.configure(bg=BRAND_BG, fg="#c9d6e6"))
         else:
@@ -2902,18 +2904,18 @@ def gui():
         return cv
 
     # ------------------------------------------------------------------ header band (logo, name, About, Settings)
-    header = tk.Frame(root, bg=BRAND_BG)
+    header = reg(tk.Frame(root, bg=BRAND_BG), bg="brand")
     header.pack(fill="x")
     try:
         hi_dpi = float(root.tk.call("tk", "scaling")) >= 1.7
         logo_img = tk.PhotoImage(data=LOGO_B64["2x" if hi_dpi else "1x"])
-        logo_lbl = tk.Label(header, image=logo_img, bg=BRAND_BG, bd=0)
+        logo_lbl = reg(tk.Label(header, image=logo_img, bg=BRAND_BG, bd=0), bg="brand")
         logo_lbl.image = logo_img  # keep a reference or tk drops the picture
         logo_lbl.pack(side="left", padx=(18, 4), pady=6)
     except Exception:  # noqa: BLE001 - the header simply stays without a logo
         pass
-    tk.Label(header, text=APP, bg=BRAND_BG, fg=BRAND_FG, font=f_brand).pack(side="left", padx=(8, 8), pady=10)
-    tk.Label(header, text=f"v{VERSION}", bg=BRAND_BG, fg="#9fb6cf", font=f_small).pack(side="left", pady=(14, 8))
+    reg(tk.Label(header, text=APP, bg=BRAND_BG, fg=BRAND_FG, font=f_brand), bg="brand").pack(side="left", padx=(8, 8), pady=10)
+    reg(tk.Label(header, text=f"v{VERSION}", bg=BRAND_BG, fg="#9fb6cf", font=f_small), bg="brand").pack(side="left", pady=(14, 8))
     flat_btn(header, "⚙  Settings", lambda: open_settings(), "hdr").pack(side="right", padx=(0, 14), pady=10)
     flat_btn(header, "About", lambda: show_about(), "hdr").pack(side="right", padx=2, pady=10)
 
@@ -3302,9 +3304,9 @@ def gui():
         w.transient(root)
         w.resizable(False, False)
         reg(w, bg="bg")
-        hb = tk.Frame(w, bg=BRAND_BG)
+        hb = reg(tk.Frame(w, bg=BRAND_BG), bg="brand")
         hb.pack(fill="x")
-        tk.Label(hb, text="Settings", bg=BRAND_BG, fg=BRAND_FG, font=f_brand).pack(side="left", padx=24, pady=14)
+        reg(tk.Label(hb, text="Settings", bg=BRAND_BG, fg=BRAND_FG, font=f_brand), bg="brand").pack(side="left", padx=24, pady=14)
         foot = reg(tk.Frame(w, highlightthickness=1), bg="panel", highlightbackground="border")
         foot.pack(side="bottom", fill="x")
 
@@ -3529,15 +3531,12 @@ def gui():
         dl.grid(row=1, column=1, sticky="new", padx=(0, 10), pady=(0, 10))
         parts = (c, ic, tl, dl)
 
-        def paint(col):
-            for x in parts:
-                x.configure(bg=col)
-        c.bind("<Enter>", lambda e: paint(pal()["hover"]))
-        c.bind("<Leave>", lambda e: paint(pal()["panel"]))
+        def hover(on):
+            c.configure(highlightbackground=GOLD if on else pal()["border"])
+        c.bind("<Enter>", lambda e: hover(True))
+        c.bind("<Leave>", lambda e: hover(False))
         for x in parts:
             x.bind("<Button-1>", lambda e, s=spec: open_op(s))
-            if x is not c:
-                x.bind("<Enter>", lambda e: paint(pal()["hover"]))
         c.bind("<Return>", lambda e, s=spec: open_op(s))
         c.bind("<space>", lambda e, s=spec: open_op(s))
 
@@ -3693,6 +3692,17 @@ def gui():
             register_drop_tree(c)
 
     build_side()
+
+    # Repaint every themed widget once the window is on screen (guards against colours being reset while it opens).
+    def refresh_all():
+        retheme()
+        for c_ in ["Favourites"] + CATEGORIES:
+            build_cat(c_)
+        show_cat()
+        try:
+            write_log(f"colours: header={header.cget('bg')} card={card.cget('bg')} (expected {pal()['brand']} / {pal()['panel']})")
+        except Exception:  # noqa: BLE001
+            pass
     refresh_gpu_ui()
     status_dot()
     info_changed()
@@ -5299,6 +5309,7 @@ def gui():
             pass
     if splash["win"] is not None:
         root.after(max(50, int(2000 - (time.time() - splash["t0"]) * 1000)), end_splash)
+    root.after(2600, refresh_all)
 
     pump()
     if "--docshots" in sys.argv and os.name == "nt":
