@@ -3542,3 +3542,12 @@ _ABOUT_TR = {
 }
 for _c, (_a, _b, _d) in _ABOUT_TR.items():
     TR[_c].update({"About": _a, "Open the illustrated guide": _b, "GitHub page": _d})
+
+
+# Renamed buttons / messages in the redesigned window reuse the existing translations.
+for _t in TR.values():
+    for _new, _old in (("Choose files…", "Browse files…"), ("Whole folder…", "Batch folder…")):
+        if _old in _t and _new not in _t:
+            _t[_new] = _t[_old]
+    for _k in [k for k in _t if k.startswith("Please select an input file or folder first.")]:
+        _t[_k.replace("Browse files...", "Choose files...").replace("Batch folder...", "Whole folder...")] = _t[_k]

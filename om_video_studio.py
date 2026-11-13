@@ -961,7 +961,7 @@ def b_gif(o, c):
 # Image convert/resize (kind=image): jpg / png / webp with optional width (0 = keep); jpg uses -q:v 2.
 @op("Images & Frames", "imgconv", "Convert / resize image",
     [O("fmt", "Format", "choice", "jpg", ["jpg", "png", "webp"]), O("w", "Width (0 = keep)", "int", 0)], kind="image",
-    tip="Pick a folder with 'Batch folder' to convert every image in it.")
+    tip="Pick a folder with 'Whole folder' to convert every image in it.")
 def b_imgconv(o, c):
     a = ["-i", c.src]
     if int(o["w"]):
@@ -1236,7 +1236,7 @@ def b_crossfade(o, c):
      O("fx", "Effect", "choice", "Slow zoom in", ["Slow zoom in", "Slow zoom out", "None (still)"]),
      O("size", "Video size", "choice", "1920x1080 landscape", ["1920x1080 landscape", "1080x1920 vertical", "1080x1080 square"]),
      O("tr", "Crossfade between photos (seconds, 0 = cut)", "float", 0.5), O("music", "Music (optional)", "file", ftype="audio")],
-    kind="image", tip="Choose your photos with 'Add…' or 'Add folder…' below (the Input box can stay empty), or pick a folder with 'Batch folder'. Photos are used in name order.", folder_one=True)
+    kind="image", tip="Choose your photos with 'Add…' or 'Add folder…' below (the Input box can stay empty), or pick a folder with 'Whole folder'. Photos are used in name order.", folder_one=True)
 def b_slideshow(o, c):
     imgs = [c.src] + list(o["files"])
     n = len(imgs)
@@ -2393,12 +2393,23 @@ UI_FONT, MONO_FONT = (("Segoe UI", "Consolas") if IS_WIN else ("Helvetica Neue",
 CAT_ICONS = {"Favourites": "★", "Video": "\U0001F3AC", "Format & Quality": "\U0001F527", "Audio": "\U0001F3B5", "Combine": "\U0001F9E9",
              "Text & Subtitles": "\U0001F4AC", "Effects & Colour": "\U0001F3A8", "Images & Frames": "\U0001F5BC", "Analysis": "\U0001F50D",
              "Streaming": "\U0001F4E1"}
+# One icon per popular tool for the cards (other tools use their group's icon).
+TOOL_ICONS = {"trim": "\u2702", "join": "\U0001F517", "split": "\u2797", "speed": "\u23E9", "reverse": "\u23EA", "resize": "\U0001F4D0",
+              "crop": "\U0001F4CF", "rotate": "\U0001F504", "flip": "\u2194", "aspect": "\U0001F4F1", "loop": "\U0001F501",
+              "stabilise": "\U0001F4F7", "freeze": "\u2744", "convert": "\U0001F500", "remux": "\U0001F4E6", "faststart": "\u26A1",
+              "social": "\U0001F4F2", "compress": "\U0001F5DC", "extract": "\U0001F3B5", "loudnorm": "\U0001F50A", "silence": "\U0001F507",
+              "volume": "\U0001F50A", "fade": "\U0001F305", "denoise": "\U0001F9F9", "narration": "\U0001F399", "thumb": "\U0001F5BC",
+              "frames": "\U0001F39E", "gif": "\U0001F300", "watermark": "\U0001F4A7", "pip": "\U0001F5D7", "slideshow": "\U0001F304",
+              "burnsubs": "\U0001F4AC", "drawtext": "\U0001F524", "timer": "\u23F1", "colour": "\U0001F3A8", "blur": "\U0001F32B",
+              "bw": "\u26AB", "probe": "\U0001F50D"}
 # Light and dark colour sets; BRAND_* are the accent colours used for headers and the primary button.
 PALETTE = {
-    "light": dict(bg="#fafafa", fg="#1a1a1a", muted="#666666", log_bg="#ffffff", log_fg="#202020", sel="#cfe3ff"),
-    "dark": dict(bg="#1c1c1c", fg="#f0f0f0", muted="#a6a6a6", log_bg="#141414", log_fg="#e6e6e6", sel="#33507a"),
+    "light": dict(bg="#fafafa", fg="#1a1a1a", muted="#666666", log_bg="#ffffff", log_fg="#202020", sel="#cfe3ff",
+                  panel="#ffffff", border="#d9dde3", chip="#eceff3", hover="#f1f5fb", side_sel="#fff3d3"),
+    "dark": dict(bg="#1c1c1c", fg="#f0f0f0", muted="#a6a6a6", log_bg="#141414", log_fg="#e6e6e6", sel="#33507a",
+                 panel="#252a31", border="#373d46", chip="#303741", hover="#2e353f", side_sel="#3a3220"),
 }
-BRAND_BG, BRAND_FG, BRAND_GOLD = "#0f2a47", "#ffffff", "#f2c14e"
+BRAND_BG, BRAND_FG, BRAND_GOLD = "#0f2a47", "#ffffff", "#f4be46"
 # White one-colour O.M. Industries logo (transparent PNG, base64) for the header band. 1x = normal screens, 2x = high-DPI. tk.PhotoImage reads PNG natively, so no extra libraries are needed.
 LOGO_B64 = {
     "1x": "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",
@@ -2465,7 +2476,7 @@ TOOL_DOCS = {
     "frames": "Save a series of pictures from the video into a folder, one every N seconds.",
     "contact": "Make one picture showing a grid of frames from across the whole video, like a contact sheet. Choose the number of columns, rows and the thumbnail width.",
     "gif": "Turn a section of a video into an animated GIF with an optimised colour palette. Set the start, length, frames per second and width. The film strip shows the section as a window you can drag.",
-    "imgconv": "Convert a picture to jpg, png or webp and optionally resize it. Choose 'Batch folder' at the top to convert every image in a folder at once.",
+    "imgconv": "Convert a picture to jpg, png or webp and optionally resize it. Choose 'Whole folder' at the top to convert every image in a folder at once.",
     # ---- Analysis
     "probe": "Write a full technical report about a file (codecs, size, bitrate, tracks, metadata) to a text file, using ffprobe.",
     "silencedetect": "List where the quiet gaps are in a file, with start times and lengths, without changing the file.",
@@ -2628,6 +2639,8 @@ def gui():
     f_mono = tkfont.Font(family=MONO_FONT, size=fsize["v"] - 1)
     f_title = tkfont.Font(family=UI_FONT, size=fsize["v"] + 9, weight="normal")
     f_brand = tkfont.Font(family=UI_FONT, size=fsize["v"] + 2, weight="normal")
+    f_small = tkfont.Font(family=UI_FONT, size=fsize["v"] - 1)
+    f_icon = tkfont.Font(family=UI_FONT, size=fsize["v"] + 6)
     # Report Tk callback exceptions to the log and a message box instead of failing silently.
     def _tk_error(et, ev, tb):
         import traceback
@@ -2636,6 +2649,7 @@ def gui():
     root.report_callback_exception = _tk_error
     write_log(f"--- {APP} v{VERSION} started ({'installed exe' if FROZEN else 'script'}, python {sys.version.split()[0]}, ffmpeg: {ff_version() if find_tool('ffmpeg') else 'not found'}) ---")
     wrapped, themed_text, themed_canvas = [], [], []
+    themed, rethemers = [], []  # plain tk widgets that follow the light/dark palette
     state = {"running": False, "outputs": [], "outdir": None, "theme": theme, "multi": None, "multi_label": "", "queue": []}
 
     # Current palette (light or dark).
@@ -2645,7 +2659,7 @@ def gui():
     # Scale all named fonts from the A+/A- size setting.
     def apply_fonts():
         n = fsize["v"]
-        for f_, extra in ((f_base, 0), (f_bold, 0), (f_head, 3), (f_mono, -1), (f_title, 9), (f_brand, 2)):
+        for f_, extra in ((f_base, 0), (f_bold, 0), (f_head, 3), (f_mono, -1), (f_title, 9), (f_brand, 2), (f_small, -1), (f_icon, 6)):
             f_.configure(size=n + extra)
         for nm in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkCaptionFont", "TkSmallCaptionFont", "TkTooltipFont"):
             try:
@@ -2663,6 +2677,10 @@ def gui():
     def apply_styles():
         p = pal()
         apply_fonts()
+        try:
+            root.configure(bg=p["bg"])
+        except tk.TclError:
+            pass
         for st in ("TLabel", "TButton", "TCheckbutton", "TRadiobutton", "TEntry", "TCombobox", "TLabelframe.Label", "Toolbutton"):
             try:
                 style.configure(st, font=f_base)
@@ -2718,7 +2736,10 @@ def gui():
         state["theme"] = "dark" if state["theme"] == "light" else "light"
         sv_ttk.set_theme(state["theme"])
         apply_styles()
-        theme_btn.configure(text="☾  Dark mode" if state["theme"] == "light" else "☀  Light mode")
+        retheme()
+        for c_ in ["Favourites"] + CATEGORIES:
+            build_cat(c_)
+        build_search() if search_var.get().strip() else show_cat()
         settings["theme"] = state["theme"]
         save_settings(settings)
         title_bar()
@@ -2793,37 +2814,110 @@ def gui():
                     txt.insert("end", TOOL_DOCS.get(o["id"], o.get("tip") or "") + "\n")
         txt.insert("end", "\nGPU encoding\n", "cat")
         txt.insert("end", "If a supported graphics card is found (NVIDIA, AMD, Intel or Apple) the app uses it to encode video faster; "
-                          "otherwise it uses the CPU. The Check GPU button at the bottom shows what was found.\n")
+                          "otherwise it uses the CPU. Settings has a Check graphics card button that shows what was found.\n")
         txt.configure(state="disabled")
 
-    # ------------------------------------------------------------------ header band
+    # ------------------------------------------------------------------ new look: colours, small widgets, header
+    GOLD, GOLD_HOVER, ON_GOLD, GREEN = "#f4be46", "#ffd77a", "#1a1405", "#5fd08a"
+
+    # Register a plain tk widget so its colours follow the light/dark palette (opts: option -> palette key).
+    def reg(w, **opts):
+        themed.append((w, opts))
+        try:
+            w.configure(**{k: pal()[v] for k, v in opts.items()})
+        except tk.TclError:
+            pass
+        return w
+
+    # Re-colour every registered widget after a theme switch.
+    def retheme():
+        p = pal()
+        try:
+            root.configure(bg=p["bg"])
+        except tk.TclError:
+            pass
+        for w, opts in list(themed):
+            try:
+                w.configure(**{k: p[v] for k, v in opts.items()})
+            except tk.TclError:
+                pass
+        for fn in list(rethemers):
+            try:
+                fn()
+            except Exception:  # noqa: BLE001
+                pass
+
+    # A flat clickable label used as a button (gold = main action, ghost = bordered, hdr = on the navy header).
+    def flat_btn(parent, text, command, kind="ghost", font=None):
+        if kind == "gold":
+            b = tk.Label(parent, text=text, font=font or f_bold, bg=GOLD, fg=ON_GOLD, padx=18, pady=9, cursor="hand2")
+            b.bind("<Enter>", lambda e: b.configure(bg=GOLD_HOVER))
+            b.bind("<Leave>", lambda e: b.configure(bg=GOLD))
+        elif kind == "hdr":
+            b = tk.Label(parent, text=text, font=font or f_base, bg=BRAND_BG, fg="#c9d6e6", padx=12, pady=7, cursor="hand2")
+            b.bind("<Enter>", lambda e: b.configure(bg="#1d4470", fg="#ffffff"))
+            b.bind("<Leave>", lambda e: b.configure(bg=BRAND_BG, fg="#c9d6e6"))
+        else:
+            b = tk.Label(parent, text=text, font=font or f_base, padx=14, pady=8, cursor="hand2", highlightthickness=1)
+            reg(b, bg="panel", fg="fg", highlightbackground="border")
+            b.bind("<Enter>", lambda e: b.configure(bg=pal()["hover"]))
+            b.bind("<Leave>", lambda e: b.configure(bg=pal()["panel"]))
+        b.bind("<Button-1>", lambda e: command())
+        return b
+
+    # On/off switch drawn on a canvas (gold when on).
+    def make_switch(parent, var, command=None):
+        cv = tk.Canvas(parent, width=46, height=26, highlightthickness=0, bd=0, cursor="hand2", takefocus=1)
+
+        def draw(*_):
+            p = pal()
+            try:
+                cv.configure(bg=p["bg"])
+                cv.delete("all")
+                on = bool(var.get())
+                off_track = "#3a4553" if state["theme"] == "dark" else "#b8c0ca"
+                dis = str(cv.cget("state")) == "disabled"
+                track = (GOLD if on else off_track) if not dis else off_track
+                cv.create_oval(0, 0, 26, 26, fill=track, outline=track)
+                cv.create_oval(20, 0, 46, 26, fill=track, outline=track)
+                cv.create_rectangle(13, 0, 33, 26, fill=track, outline=track)
+                x = 26 if on else 3
+                cv.create_oval(x, 3, x + 20, 23, fill=("#14181d" if on and not dis else "#e8edf2"), outline="")
+            except tk.TclError:
+                pass
+
+        def click(_e=None):
+            if str(cv.cget("state")) == "disabled":
+                return
+            var.set(not var.get())
+            if command:
+                command()
+        cv.bind("<Button-1>", click)
+        cv.bind("<space>", click)
+        cv.bind("<Return>", click)
+        var.trace_add("write", lambda *a: draw())
+        cv.redraw = draw
+        draw()
+        rethemers.append(draw)
+        return cv
+
+    # ------------------------------------------------------------------ header band (logo, name, About, Settings)
     header = tk.Frame(root, bg=BRAND_BG)
     header.pack(fill="x")
-    hl = tk.Frame(header, bg=BRAND_BG)
-    hl.pack(side="left", padx=20, pady=12)
-    tk.Label(hl, text=f"{APP} {VERSION}", bg=BRAND_BG, fg=BRAND_FG, font=f_title).pack(anchor="w")
-    tk.Label(hl, text="Video  ·  Audio  ·  Image toolkit", bg=BRAND_BG, fg="#9fb6cf", font=f_base).pack(anchor="w")
-    hr = tk.Frame(header, bg=BRAND_BG)
-    hr.pack(side="right", padx=20, pady=12)
-    # Logo in the middle of the header band (white, so it reads on the dark band in both light and dark mode).
     try:
         hi_dpi = float(root.tk.call("tk", "scaling")) >= 1.7
         logo_img = tk.PhotoImage(data=LOGO_B64["2x" if hi_dpi else "1x"])
         logo_lbl = tk.Label(header, image=logo_img, bg=BRAND_BG, bd=0)
         logo_lbl.image = logo_img  # keep a reference or tk drops the picture
-        logo_lbl.pack(side="right", padx=(0, 16), pady=6)  # sits just left of the Light mode / language block
-        tk.Frame(header, width=1, height=logo_img.height() + 30, bg=BRAND_BG).pack(side="left")  # keeps the band tall enough for the logo
+        logo_lbl.pack(side="left", padx=(18, 4), pady=6)
     except Exception:  # noqa: BLE001 - the header simply stays without a logo
         pass
-    theme_btn = ttk.Button(hr, text="☾  Dark mode" if theme == "light" else "☀  Light mode", command=toggle_theme)
-    if sv_ttk:
-        theme_btn.pack(anchor="e", pady=(6, 0))
+    tk.Label(header, text=APP, bg=BRAND_BG, fg=BRAND_FG, font=f_brand).pack(side="left", padx=(8, 8), pady=10)
+    tk.Label(header, text=f"v{VERSION}", bg=BRAND_BG, fg="#9fb6cf", font=f_small).pack(side="left", pady=(14, 8))
+    flat_btn(header, "⚙  Settings", lambda: open_settings(), "hdr").pack(side="right", padx=(0, 14), pady=10)
+    flat_btn(header, "About", lambda: show_about(), "hdr").pack(side="right", padx=2, pady=10)
+
     lang_var = tk.StringVar(value=LANGS.get(LANG["code"], "English"))
-    lrow = tk.Frame(hr, bg=BRAND_BG)
-    lrow.pack(anchor="e", pady=(6, 0))
-    lang_box = ttk.Combobox(lrow, textvariable=lang_var, values=list(LANGS.values()), state="readonly", width=16)
-    lang_box.pack(side="right")
-    ttk.Button(lrow, text="About", command=lambda: show_about()).pack(side="right", padx=(0, 6))
 
     # Language combobox handler: save the choice and offer to restart so every widget picks it up.
     def on_lang(_e=None):
@@ -2842,15 +2936,88 @@ def gui():
                 root.destroy()
             except Exception:  # noqa: BLE001
                 messagebox.showinfo(APP, "Please close and reopen the app to use the new language.")
-    lang_box.bind("<<ComboboxSelected>>", on_lang)
 
-    # ------------------------------------------------------------------ input card
-    card = ttk.LabelFrame(root, text="Input", padding=(12, 8, 12, 8))
-    card.pack(fill="x", padx=14, pady=(12, 4))
+    # ------------------------------------------------------------------ input card: thumbnail, name, info chips, save folder
+    name_var = tk.StringVar(value="No file chosen")
+    save_var = tk.StringVar()
+    chips_state = {"items": []}
+    hint = "Drag a file or folder onto this window, or use the buttons on the right." if dnd else "Choose a file or a folder with the buttons on the right. (pip install tkinterdnd2 adds drag-and-drop.)"
+    info_var.set(hint)
+    card = reg(tk.Frame(root, highlightthickness=1), bg="panel", highlightbackground="border")
+    card.pack(fill="x", padx=14, pady=(10, 4))
     card.columnconfigure(1, weight=1)
-    ttk.Label(card, text="File or folder:").grid(row=0, column=0, sticky="w")
-    ent = ttk.Entry(card, textvariable=path_var)
-    ent.grid(row=0, column=1, sticky="ew", padx=8)
+    thumb_box = reg(tk.Frame(card, width=172, height=100), bg="chip")
+    thumb_box.grid(row=0, column=0, rowspan=2, sticky="nw", padx=12, pady=12)
+    thumb_box.pack_propagate(False)
+    thumb_lbl = reg(tk.Label(thumb_box, text="＋", font=f_title), bg="chip", fg="muted")
+    thumb_lbl.pack(fill="both", expand=True)
+    mid = reg(tk.Frame(card), bg="panel")
+    mid.grid(row=0, column=1, sticky="nsew", pady=(12, 0))
+    reg(tk.Label(mid, textvariable=name_var, font=f_head, anchor="w"), bg="panel", fg="fg").pack(fill="x")
+    chips_fr = reg(tk.Frame(mid), bg="panel")
+    chips_fr.pack(fill="x", pady=(6, 2))
+    info_lbl = reg(tk.Label(mid, textvariable=info_var, font=f_small, anchor="w", justify="left", wraplength=700), bg="panel", fg="muted")
+    info_lbl.pack(fill="x")
+    wrapped.append(info_lbl)
+    saves = reg(tk.Frame(mid), bg="panel")
+    saves.pack(fill="x", pady=(6, 0))
+    reg(tk.Label(saves, text="Saves to", font=f_small), bg="panel", fg="muted").pack(side="left")
+    reg(tk.Label(saves, textvariable=save_var, font=f_small), bg="panel", fg="fg").pack(side="left", padx=(6, 8))
+    chg = tk.Label(saves, text="Change", font=f_small, fg=GOLD, cursor="hand2")
+    reg(chg, bg="panel")
+    chg.pack(side="left")
+    rst = tk.Label(saves, text="Same as source", font=f_small, fg=GOLD, cursor="hand2")
+    reg(rst, bg="panel")
+    rst.pack(side="left", padx=(12, 0))
+    right = reg(tk.Frame(card), bg="panel")
+    right.grid(row=0, column=2, sticky="ne", padx=12, pady=12)
+    # Second line: a path box (paste or type a path) and the recent-files list.
+    pathrow = reg(tk.Frame(card), bg="panel")
+    pathrow.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 12), pady=(0, 12))
+    pathrow.columnconfigure(0, weight=1)
+    ent = ttk.Entry(pathrow, textvariable=path_var)
+    ent.grid(row=0, column=0, sticky="ew")
+    recent = ttk.Combobox(pathrow, values=settings.get("recent", []), state="readonly", width=22)
+    recent.grid(row=0, column=1, padx=(8, 0))
+    recent.set(tr("Recent files"))
+
+    def out_changed(*_):
+        save_var.set(out_var.get() or tr("next to the original file"))
+    out_var.trace_add("write", out_changed)
+    out_changed()
+
+    # Draw the little grey info chips (length, size, codec ...) under the file name.
+    def set_chips(items=None):
+        if items is not None:
+            chips_state["items"] = list(items)
+        for c in chips_fr.winfo_children():
+            c.destroy()
+        p = pal()
+        for t in chips_state["items"]:
+            tk.Label(chips_fr, text=t, font=f_small, bg=p["chip"], fg=p["fg"], padx=8, pady=2).pack(side="left", padx=(0, 6))
+        register_drop_tree(chips_fr)
+    rethemers.append(set_chips)
+
+    # Thumbnail of the chosen file (or a placeholder symbol).
+    def set_thumb(png=None, glyph="＋"):
+        try:
+            if png:
+                img = tk.PhotoImage(file=png)
+                thumb_lbl.configure(image=img, text="")
+                thumb_lbl.image = img
+            else:
+                thumb_lbl.configure(image="", text=glyph)
+                thumb_lbl.image = None
+        except tk.TclError:
+            thumb_lbl.configure(image="", text=glyph)
+
+    # Hide the small grey message line when it is empty.
+    def info_changed(*_):
+        if info_var.get().strip():
+            info_lbl.pack(fill="x", before=saves)
+        else:
+            info_lbl.pack_forget()
+    info_var.trace_add("write", info_changed)
 
     # Set the main Input path and refresh the info strip and recents.
     def set_path(p):
@@ -2869,13 +3036,16 @@ def gui():
         state["multi"] = files
         state["multi_label"] = f"{len(files)} files selected: " + ", ".join(Path(f).name for f in files[:3]) + (" ..." if len(files) > 3 else "")
         path_var.set(state["multi_label"])
-        info_var.set(f"Batch of {len(files)} files. Pick an operation to run it on all of them (or add it to the queue).")
+        name_var.set(f"{len(files)} files selected")
+        set_chips([Path(f).name for f in files[:3]] + (["..."] if len(files) > 3 else []))
+        set_thumb(None, "▦")
+        info_var.set("Pick an operation to run it on all of them (or add it to the queue).")
 
     # Return the multi-selection if it is still valid.
     def current_multi():
         return state["multi"] if state["multi"] and path_var.get() == state["multi_label"] else None
 
-    # 'Browse files...' dialog (multi-select).
+    # 'Choose files...' dialog (multi-select).
     def browse_file():
         ft = [("Media files", " ".join("*" + e for e in sorted(VIDEO_EXT | AUDIO_EXT | IMAGE_EXT | SUB_EXT))), ("All files", "*.*")]
         ps = filedialog.askopenfilenames(title="Choose one or more files", filetypes=ft, initialdir=settings.get("lastdir") or None)
@@ -2886,121 +3056,364 @@ def gui():
             else:
                 set_path(os.path.normpath(ps[0]))
 
-    # 'Batch folder...' dialog.
+    # 'Whole folder...' dialog.
     def browse_folder():
         p = filedialog.askdirectory(title="Choose a folder (batch)", initialdir=settings.get("lastdir") or None)
         if p:
             settings["lastdir"] = p
             set_path(os.path.normpath(p))
 
-    ttk.Button(card, text="Browse files…", command=browse_file).grid(row=0, column=2)
-    ttk.Button(card, text="Batch folder…", command=browse_folder).grid(row=0, column=3, padx=(6, 0))
-    ttk.Label(card, text="Recent:").grid(row=1, column=0, sticky="w", pady=(6, 0))
-    recent = ttk.Combobox(card, values=settings.get("recent", []), state="readonly")
-    recent.grid(row=1, column=1, columnspan=3, sticky="ew", padx=8, pady=(6, 0))
+    flat_btn(right, "Choose files…", browse_file, "gold").pack(fill="x")
+    flat_btn(right, "Whole folder…", browse_folder, "ghost").pack(fill="x", pady=(8, 0))
     recent.bind("<<ComboboxSelected>>", lambda e: set_path(recent.get()))
-    ttk.Label(card, text="Save in:").grid(row=2, column=0, sticky="w", pady=(6, 0))
-    ttk.Entry(card, textvariable=out_var).grid(row=2, column=1, sticky="ew", padx=8, pady=(6, 0))
 
-    # 'Choose...' for a custom output folder; empty = same folder as the source.
+    # 'Change' for a custom output folder; empty = same folder as the source.
     def browse_out():
         p = filedialog.askdirectory(title="Output folder")
         if p:
             out_var.set(os.path.normpath(p))
             settings["outdir"] = out_var.get()
             save_settings(settings)
-    ttk.Button(card, text="Choose…", command=browse_out).grid(row=2, column=2, pady=(6, 0))
-    ttk.Button(card, text="Same as source", command=lambda: out_var.set("")).grid(row=2, column=3, padx=(6, 0), pady=(6, 0))
-    hint = "Tip: drag a file or folder onto this window." if dnd else "Tip: run  pip install tkinterdnd2  to enable drag-and-drop."
-    info_lbl = ttk.Label(card, textvariable=info_var, style="Muted.TLabel", wraplength=1100)
-    info_lbl.grid(row=3, column=0, columnspan=4, sticky="w", pady=(8, 0))
-    wrapped.append(info_lbl)
-    ttk.Label(card, text=hint, style="Muted.TLabel").grid(row=4, column=0, columnspan=4, sticky="w")
+    chg.bind("<Button-1>", lambda e: browse_out())
+    rst.bind("<Button-1>", lambda e: out_var.set(""))
     ent.bind("<Return>", lambda e: refresh_info())
 
-    # Probe the current input in a worker thread and show its one-line summary.
+    # Short chips for the info strip: length, size, codec ...
+    def chips_for(inf):
+        out = []
+        if inf["dur"]:
+            mm, ss = divmod(inf["dur"], 60)
+            hh, mm = divmod(int(mm), 60)
+            out.append(f"{hh}:{mm:02d}:{int(ss):02d}" if hh else f"{mm}:{int(ss):02d}")
+        if inf["has_v"]:
+            out.append(f'{inf["w"]}x{inf["h"]}')
+            out.append((f'{inf["v"].get("codec_name", "?")} ' + (f'{inf["fps"]:.0f}fps' if inf["fps"] else "")).strip())
+        if inf["has_a"]:
+            out.append(f'audio {inf["a"].get("codec_name", "?")}')
+        if inf["size"]:
+            out.append(f'{inf["size"] / 1e6:.1f} MB')
+        return out
+
+    # Apply a finished file probe (only if the box still holds the same file).
+    def show_file(p, items, png, glyph):
+        if path_var.get().strip().strip('"') != p:
+            return
+        set_chips(items)
+        set_thumb(png, glyph)
+        info_var.set("")
+
+    # Probe the current input in a worker thread and show its name, chips and thumbnail.
     def refresh_info():
         if current_multi():
             return
         p = path_var.get().strip().strip('"')
+        if not p:
+            name_var.set("No file chosen")
+            set_chips([])
+            set_thumb(None)
+            info_var.set(hint)
+            return
         if not have_ff:
             info_var.set("ffmpeg is not installed yet. Use the Install ffmpeg prompt (or restart the app) to download it.")
             return
         if os.path.isdir(p):
             n = sum(1 for f in Path(p).iterdir() if f.suffix.lower() in (VIDEO_EXT | AUDIO_EXT | IMAGE_EXT))
-            info_var.set(f"Batch mode: {n} media files in {p}")
+            name_var.set(Path(p).name or p)
+            set_chips([f"{n} media files"])
+            set_thumb(None, "\U0001F4C1")
+            info_var.set("Whole folder: every media file in it is processed.")
         elif os.path.isfile(p):
+            name_var.set(Path(p).name)
+            set_chips([])
             info_var.set("Reading file…")
 
             def work():
-                q.put(("info", summary(probe(p), p)))
+                inf = probe(p)
+                items = chips_for(inf)
+                png, glyph = None, "\U0001F3B5"
+                if inf["has_v"]:
+                    glyph = "\U0001F3AC"
+                    tmp = os.path.join(tempfile.gettempdir(), "om_input_thumb.png")
+                    try:
+                        if os.path.exists(tmp):
+                            os.remove(tmp)
+                    except OSError:
+                        pass
+                    if grab_frame(p, min(1.0, inf["dur"] / 3) if inf["dur"] else 0, tmp, box=(168, 96)):
+                        png = tmp
+                q.put(("call", lambda: show_file(p, items, png, glyph)))
             threading.Thread(target=work, daemon=True).start()
-        elif p:
+        else:
+            name_var.set("No file chosen")
+            set_chips([])
+            set_thumb(None)
             info_var.set("That path does not exist.")
 
-    # ------------------------------------------------------------------ bottom (packed first so the body can expand)
-    status = ttk.Label(root, textvariable=status_var, style="Muted.TLabel", padding=(14, 4))
-    status.pack(side="bottom", fill="x")
-    bot = ttk.Frame(root, padding=(14, 0, 14, 4))
+    # ------------------------------------------------------------------ bottom bar (packed first so the body can expand)
+    bot = reg(tk.Frame(root), bg="bg")
     bot.pack(side="bottom", fill="x")
-    bar = ttk.Progressbar(bot, maximum=1000)
-    bar.pack(fill="x", pady=(4, 0))
-    row = ttk.Frame(bot)
-    row.pack(fill="x", pady=6)
-    cancel_btn = ttk.Button(row, text="Cancel", state="disabled", command=lambda: cancel.set())
-    cancel_btn.pack(side="left")
-    open_btn = ttk.Button(row, text="Open output folder", state="disabled", command=lambda: open_folder())
-    open_btn.pack(side="left", padx=6)
-    queue_btn = ttk.Button(row, text="Queue (0)", command=lambda: open_queue())
-    queue_btn.pack(side="left")
-    ttk.Button(row, text="Copy last command", command=lambda: copy_last()).pack(side="left", padx=6)
-    ttk.Checkbutton(row, text="Show ffmpeg commands", variable=cmd_var).pack(side="left", padx=4)
-    gpu_cb = ttk.Checkbutton(row, text=(f"Use GPU ({GPU_ENCODERS[gpu_key]['label']})" if gpu_available else "No GPU"),
-                             variable=gpu_var, command=lambda: STATE.update(gpu=gpu_var.get()),
-                             state=("normal" if gpu_available else "disabled"))
-    gpu_cb.pack(side="left")
+    row = reg(tk.Frame(bot, highlightthickness=1), bg="panel", highlightbackground="border")
+    row.pack(side="bottom", fill="x", padx=14, pady=(4, 10))
+    # Details panel: the full log. Hidden until "Show details" is pressed (opens by itself when something fails).
+    detail = reg(tk.Frame(bot), bg="bg")
+    dhead = reg(tk.Frame(detail), bg="bg")
+    dhead.pack(fill="x", pady=(0, 4))
+    reg(tk.Label(dhead, text="Details", font=f_bold), bg="bg", fg="fg").pack(side="left")
+    ttk.Button(dhead, text="Copy last command", command=lambda: copy_last()).pack(side="right")
+    logwrap = tk.Frame(detail)
+    logwrap.pack(fill="x")
+    logbox = tk.Text(logwrap, height=8, wrap="word", font=f_mono, state="disabled", relief="flat", borderwidth=0, padx=8, pady=6)
+    logsb = ttk.Scrollbar(logwrap, orient="vertical", command=logbox.yview)
+    logbox.configure(yscrollcommand=logsb.set)
+    logsb.pack(side="right", fill="y")
+    logbox.pack(side="left", fill="x", expand=True)
+    themed_text.append(logbox)
 
-    # "Check GPU" button: re-runs detection (e.g. after installing a driver), shows the details, and enables/updates the checkbox.
+    dot = tk.Canvas(row, width=14, height=14, highlightthickness=0, bd=0)
+    reg(dot, bg="panel")
+    dot.pack(side="left", padx=(12, 6), pady=12)
+    dot_item = dot.create_oval(2, 2, 12, 12, fill=GREEN, outline="")
+    status = reg(tk.Label(row, textvariable=status_var, font=f_base, anchor="w", width=34), bg="panel", fg="fg")
+    status.pack(side="left")
+
+    # Colour of the status dot: green = ready / finished, gold = running, red = something failed.
+    def status_dot(*_):
+        s = status_var.get()
+        low = s.lower()
+        col = GOLD if low.startswith(("running", "queue running", "reading")) else ("#ff6b6b" if ("failed" in low and " 0 failed" not in low) else GREEN)
+        dot.itemconfigure(dot_item, fill=col)
+    status_var.trace_add("write", status_dot)
+
+    det = {"on": False}
+
+    # Show or hide the details (log) panel.
+    def set_details(on):
+        det["on"] = bool(on)
+        if on:
+            detail.pack(fill="x", padx=14, pady=(6, 0), before=row)
+            details_btn.configure(text="Hide details")
+        else:
+            detail.pack_forget()
+            details_btn.configure(text="Show details")
+    open_btn = ttk.Button(row, text="Open output folder", state="disabled", command=lambda: open_folder())
+    open_btn.pack(side="right", padx=(6, 12), pady=8)
+    queue_btn = ttk.Button(row, text="Queue (0)", command=lambda: open_queue())
+    queue_btn.pack(side="right", padx=3, pady=8)
+    cancel_btn = ttk.Button(row, text="Cancel", state="disabled", command=lambda: cancel.set())
+    cancel_btn.pack(side="right", padx=3, pady=8)
+    details_btn = ttk.Button(row, text="Show details", command=lambda: set_details(not det["on"]))
+    details_btn.pack(side="right", padx=3, pady=8)
+    pill = tk.Label(row, text="", font=f_small, padx=10, pady=3, cursor="hand2")
+    reg(pill, bg="chip")
+    pill.pack(side="right", padx=8, pady=8)
+    pill.bind("<Button-1>", lambda e: open_settings())
+    bar = ttk.Progressbar(row, maximum=1000)
+    bar.pack(side="left", fill="x", expand=True, padx=10)
+
+    # ------------------------------------------------------------------ graphics card state (switch lives in Settings)
+    gpu_info = {"label": GPU_ENCODERS[gpu_key]["label"] if gpu_available else None}
+    gpu_ui = {}
+
+    # Update the bottom-bar pill and, if open, the Settings window's graphics-card row.
+    def refresh_gpu_ui():
+        p = pal()
+        if gpu_info["label"] and gpu_var.get():
+            pill.configure(text="●  Graphics card on", fg=GREEN)
+        elif gpu_info["label"]:
+            pill.configure(text="Graphics card off", fg=p["muted"])
+        else:
+            pill.configure(text="Using the processor", fg=p["muted"])
+        try:
+            lbl, sw = gpu_ui.get("status"), gpu_ui.get("switch")
+            if lbl is not None:
+                if gpu_info["label"]:
+                    lbl.configure(text=f"Graphics card found and working ({gpu_info['label']})", fg=GREEN)
+                else:
+                    lbl.configure(text="No graphics card found. The processor is used.", fg=p["muted"])
+            if sw is not None:
+                sw.configure(state="normal" if gpu_info["label"] else "disabled")
+                sw.redraw()
+        except tk.TclError:
+            pass
+    rethemers.append(refresh_gpu_ui)
+
+    # "Check graphics card": re-runs detection (e.g. after installing a driver), shows the details, and updates the switch.
     def check_gpu():
         if not refresh_tools():
             messagebox.showinfo("Check GPU", "ffmpeg was not found, so the GPU cannot be tested yet.")
             return
-        gpu_btn.configure(state="disabled", text="Checking...")
+        btn = gpu_ui.get("btn")
+        try:
+            btn.configure(state="disabled", text="Checking...")
+        except (tk.TclError, AttributeError):
+            pass
 
         def work():
             text, key = gpu_report()
             root.after(0, lambda: done(text, key))
 
         def done(text, key):
-            gpu_btn.configure(state="normal", text="Check GPU")
+            try:
+                btn.configure(state="normal", text="Check graphics card")
+            except (tk.TclError, AttributeError):
+                pass
             if key:
                 STATE["gpu_enc"] = key
-                gpu_cb.configure(text=f"Use GPU ({GPU_ENCODERS[key]['label']})", state="normal")
+                gpu_info["label"] = GPU_ENCODERS[key]["label"]
                 gpu_var.set(True)
                 STATE["gpu"] = True
             else:
-                gpu_cb.configure(text="No GPU", state="disabled")
+                gpu_info["label"] = None
                 gpu_var.set(False)
                 STATE["gpu"] = False
+            refresh_gpu_ui()
             messagebox.showinfo("Check GPU", text)
         threading.Thread(target=work, daemon=True).start()
-    gpu_btn = ttk.Button(row, text="Check GPU", command=check_gpu)
-    gpu_btn.pack(side="left", padx=2)
     snd_var = tk.BooleanVar(value=settings.get("sounds", True))
+    startup_var = tk.BooleanVar(value=settings.get("startup_sound", True))
 
-    # Sound checkbox: persist setting and play a sample ping when switched on.
+    # Sound switches: persist the setting and play a sample ping when "job finished" is switched on.
     def toggle_sound():
         settings["sounds"] = snd_var.get()
         save_settings(settings)
         if snd_var.get():
             play_ping("job")
-    ttk.Checkbutton(row, text="Sound", variable=snd_var, command=toggle_sound).pack(side="left", padx=10)
-    ttk.Button(row, text="A+", width=4, command=lambda: set_fsize(1)).pack(side="right")
-    ttk.Button(row, text="A-", width=4, command=lambda: set_fsize(-1)).pack(side="right", padx=(4, 2))
-    ttk.Label(row, text="Text size:").pack(side="right")
-    logbox = tk.Text(bot, height=7, wrap="word", font=f_mono, state="disabled", relief="flat", borderwidth=0, padx=8, pady=6)
-    logbox.pack(fill="x")
-    themed_text.append(logbox)
+
+    def toggle_startup():
+        settings["startup_sound"] = startup_var.get()
+        save_settings(settings)
+
+    # ------------------------------------------------------------------ Settings window
+    settings_win = {"w": None}
+
+    def open_settings():
+        old = settings_win["w"]
+        if old is not None:
+            try:
+                old.deiconify()
+                old.lift()
+                old.focus_force()
+                return
+            except tk.TclError:
+                settings_win["w"] = None
+        w = tk.Toplevel(root)
+        settings_win["w"] = w
+        w.title("Settings")
+        w.transient(root)
+        w.resizable(False, False)
+        reg(w, bg="bg")
+        hb = tk.Frame(w, bg=BRAND_BG)
+        hb.pack(fill="x")
+        tk.Label(hb, text="Settings", bg=BRAND_BG, fg=BRAND_FG, font=f_brand).pack(side="left", padx=24, pady=14)
+        foot = reg(tk.Frame(w, highlightthickness=1), bg="panel", highlightbackground="border")
+        foot.pack(side="bottom", fill="x")
+
+        def close():
+            settings_win["w"] = None
+            for k in ("status", "switch", "btn"):
+                gpu_ui.pop(k, None)
+            w.destroy()
+        flat_btn(foot, "Done", close, "gold").pack(side="right", padx=24, pady=12)
+        w.protocol("WM_DELETE_WINDOW", close)
+        w.bind("<Escape>", lambda e: close())
+        bodyf = reg(tk.Frame(w), bg="bg")
+        bodyf.pack(fill="both", expand=True, padx=24, pady=(16, 8))
+
+        def section(title, first=False):
+            if not first:
+                reg(tk.Frame(bodyf, height=1), bg="border").pack(fill="x", pady=(14, 14))
+            reg(tk.Label(bodyf, text=title.upper(), font=f_small, anchor="w"), bg="bg", fg="muted").pack(fill="x", pady=(0, 8))
+
+        def line(label, sub=None):
+            fr = reg(tk.Frame(bodyf), bg="bg")
+            fr.pack(fill="x", pady=5)
+            lf = reg(tk.Frame(fr), bg="bg")
+            lf.pack(side="left", fill="x", expand=True)
+            reg(tk.Label(lf, text=label, font=f_base, anchor="w", justify="left"), bg="bg", fg="fg").pack(anchor="w")
+            subl = None
+            if sub is not None:
+                subl = reg(tk.Label(lf, text=sub, font=f_small, anchor="w", justify="left"), bg="bg", fg="muted")
+                subl.pack(anchor="w")
+            return fr, subl
+
+        section("Appearance", first=True)
+        if sv_ttk:
+            fr, _ = line("Theme")
+            seg = reg(tk.Frame(fr, highlightthickness=1), bg="chip", highlightbackground="border")
+            seg.pack(side="right")
+            seg_btns = {}
+
+            def draw_seg():
+                for nm, b in seg_btns.items():
+                    on = state["theme"] == nm
+                    try:
+                        b.configure(bg=GOLD if on else pal()["chip"], fg=ON_GOLD if on else pal()["fg"], font=f_bold if on else f_base)
+                    except tk.TclError:
+                        pass
+
+            def pick(nm):
+                if state["theme"] != nm:
+                    toggle_theme()
+                draw_seg()
+            for nm, txt in (("dark", "Dark"), ("light", "Light")):
+                b = tk.Label(seg, text=txt, padx=16, pady=6, cursor="hand2")
+                b.pack(side="left", padx=2, pady=2)
+                b.bind("<Button-1>", lambda e, nm=nm: pick(nm))
+                seg_btns[nm] = b
+            draw_seg()
+            rethemers.append(draw_seg)
+        fr, _ = line("Language")
+        lb = ttk.Combobox(fr, textvariable=lang_var, values=list(LANGS.values()), state="readonly", width=18)
+        lb.pack(side="right")
+        lb.bind("<<ComboboxSelected>>", on_lang)
+        fr, _ = line("Text size")
+        reg(tk.Label(fr, text="A", font=f_small), bg="bg", fg="muted").pack(side="left", padx=(0, 6))
+        fs_var = tk.DoubleVar(value=fsize["v"])
+
+        def on_fs(v):
+            n = int(round(float(v)))
+            if n != fsize["v"]:
+                set_fsize(n - fsize["v"])
+        sc = ttk.Scale(fr, from_=10, to=22, orient="horizontal", length=150, variable=fs_var, command=on_fs)
+        sc.pack(side="left")
+        reg(tk.Label(fr, text="A", font=f_head), bg="bg", fg="muted").pack(side="left", padx=(6, 0))
+
+        section("Speed")
+        fr, sub = line("Use the graphics card when there is one", "")
+        sw = make_switch(fr, gpu_var, lambda: (STATE.update(gpu=gpu_var.get()), refresh_gpu_ui()))
+        sw.pack(side="right")
+        gpu_ui["status"], gpu_ui["switch"] = sub, sw
+        fr, _ = line("")
+        gbtn = flat_btn(fr, "Check graphics card", check_gpu, "ghost")
+        gbtn.pack(side="left")
+        gpu_ui["btn"] = gbtn
+        refresh_gpu_ui()
+
+        section("Sounds")
+        fr, _ = line("Play a sound when a job finishes")
+        make_switch(fr, snd_var, toggle_sound).pack(side="right")
+        fr, _ = line("Play the start-up sound")
+        make_switch(fr, startup_var, toggle_startup).pack(side="right")
+
+        section("For experts")
+        fr, _ = line("Show the ffmpeg commands in the details")
+        make_switch(fr, cmd_var).pack(side="right")
+        w.update_idletasks()
+        try:
+            w.geometry(f"+{root.winfo_rootx() + 80}+{root.winfo_rooty() + 40}")
+        except tk.TclError:
+            pass
+        title_bar_for(w)
+
+    # Dark native title bar for a secondary window (best effort).
+    def title_bar_for(win):
+        if os.name != "nt":
+            return
+        try:
+            import pywinstyles
+            pywinstyles.apply_style(win, "dark" if state["theme"] == "dark" else "normal")
+        except Exception:  # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------ body: sidebar + content
     body = ttk.Frame(root)
@@ -3061,7 +3474,19 @@ def gui():
     content = ttk.Frame(body)
     content.grid(row=0, column=1, sticky="nsew")
     content.columnconfigure(0, weight=1)
-    content.rowconfigure(0, weight=1)
+    content.rowconfigure(1, weight=1)
+    # Search box above the tool grid.
+    search_var = tk.StringVar()
+    sbar = ttk.Frame(content)
+    sbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+    sbar.columnconfigure(1, weight=1)
+    ttk.Label(sbar, text=f"\U0001F50E  Search all {len(OPS)} tools").grid(row=0, column=0, padx=(2, 10))
+    search_ent = ttk.Entry(sbar, textvariable=search_var)
+    search_ent.grid(row=0, column=1, sticky="ew")
+    pages = ttk.Frame(content)
+    pages.grid(row=1, column=0, sticky="nsew")
+    pages.columnconfigure(0, weight=1)
+    pages.rowconfigure(0, weight=1)
 
     cat_frames, cat_inner = {}, {}
     cat_var = tk.StringVar(value=settings.get("cat", "Video") if settings.get("cat") in CATEGORIES + ["Favourites"] else "Video")
@@ -3077,47 +3502,169 @@ def gui():
             if not play_alert():  # standard Windows / macOS alert sound
                 root.bell()
             ent.focus_set()
-            messagebox.showwarning(APP, "Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.")
+            messagebox.showwarning(APP, "Please select an input file or folder first.\n\nUse Choose files..., Whole folder..., or drag a file onto this window.")
             return
         open_dialog(spec)
 
-    # Lay operation buttons out in a responsive grid.
+    # One-line description for a tool card: the first sentence of its plain-English description.
+    def short_doc(spec):
+        d = TOOL_DOCS.get(spec["id"]) or spec.get("tip") or ""
+        d = d.strip().split(". ")[0].rstrip(".")
+        if len(d) > 74:
+            d = d[:74].rsplit(" ", 1)[0] + "…"
+        return d
+
+    # One tool card: icon, short title and a grey one-line description. The whole card is clickable.
+    def make_card(parent, spec):
+        p = pal()
+        c = tk.Frame(parent, bg=p["panel"], highlightthickness=1, highlightbackground=p["border"], highlightcolor=GOLD, cursor="hand2", takefocus=1)
+        c.columnconfigure(1, weight=1)
+        icon = TOOL_ICONS.get(spec["id"]) or CAT_ICONS.get(spec["cat"], "")
+        ic = tk.Label(c, text=icon, font=f_icon, bg=p["panel"], fg=GOLD, width=2)
+        ic.grid(row=0, column=0, rowspan=2, padx=(10, 4), pady=10)
+        title = tr(spec["label"]).split(" (")[0]
+        tl = tk.Label(c, text=title, font=f_bold, bg=p["panel"], fg=p["fg"], anchor="w", justify="left")
+        tl.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=(10, 0))
+        dl = tk.Label(c, text=short_doc(spec), font=f_small, bg=p["panel"], fg=p["muted"], anchor="nw", justify="left")
+        dl.grid(row=1, column=1, sticky="new", padx=(0, 10), pady=(0, 10))
+        parts = (c, ic, tl, dl)
+
+        def paint(col):
+            for x in parts:
+                x.configure(bg=col)
+        c.bind("<Enter>", lambda e: paint(pal()["hover"]))
+        c.bind("<Leave>", lambda e: paint(pal()["panel"]))
+        for x in parts:
+            x.bind("<Button-1>", lambda e, s=spec: open_op(s))
+            if x is not c:
+                x.bind("<Enter>", lambda e: paint(pal()["hover"]))
+        c.bind("<Return>", lambda e, s=spec: open_op(s))
+        c.bind("<space>", lambda e, s=spec: open_op(s))
+
+        def wrap(e):
+            w_ = max(120, e.width - 70)
+            tl.configure(wraplength=w_)
+            dl.configure(wraplength=w_)
+        c.bind("<Configure>", wrap)
+        return c
+
+    # Lay operation cards out in a responsive 3-column grid.
     def fill_buttons(fr, ops, start_row=1):
         for i, spec in enumerate(ops):
-            b = ttk.Button(fr, text=spec["label"].replace(" (", "\n("), style="Op.TButton", command=lambda s=spec: open_op(s))
-            b.grid(row=start_row + i // 3, column=i % 3, sticky="nsew", padx=6, pady=6)
+            make_card(fr, spec).grid(row=start_row + i // 3, column=i % 3, sticky="nsew", padx=6, pady=6)
         for col in range(3):
             fr.columnconfigure(col, weight=1, uniform="c")
         for rw in range((len(ops) + 2) // 3):
-            fr.rowconfigure(start_row + rw, uniform="rows", minsize=78)
+            fr.rowconfigure(start_row + rw, uniform="rows", minsize=88)
 
-    # Build one category page (its button grid and description).
-    def build_cat(cat):
-        if cat not in cat_frames:
-            outer_, inner_ = make_scroll(content)
+    # Get (or create) a scrolling page frame and clear it.
+    def page(key):
+        if key not in cat_frames:
+            outer_, inner_ = make_scroll(pages)
             outer_.grid(row=0, column=0, sticky="nsew")
-            cat_frames[cat], cat_inner[cat] = outer_, inner_
-        fr = cat_inner[cat]
+            cat_frames[key], cat_inner[key] = outer_, inner_
+        fr = cat_inner[key]
         for w in fr.winfo_children():
             w.destroy()
+        return fr
+
+    # Build one category page (heading, one-line description and its tool cards).
+    def build_cat(cat):
+        fr = page(cat)
         if cat == "Favourites":
             ops = [ops_by_id[i] for i in settings.get("favs", []) if i in ops_by_id]
         else:
             ops = [o for o in OPS if o["cat"] == cat]
-        ttk.Label(fr, text=f"{CAT_ICONS.get(cat, '')}  {cat}", style="Head.TLabel").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 6))
+        ttk.Label(fr, text=f"{CAT_ICONS.get(cat, '')}  {cat}", style="Head.TLabel").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 2))
         if not ops:
             ttk.Label(fr, text="No favourites yet.\nOpen any operation and tick ★ Add to favourites.", style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=20)
         else:
-            fill_buttons(fr, ops)
+            fill_buttons(fr, ops, 1)
         register_drop_tree(fr)
+        style_side()
 
-    # Switch the visible category page.
+    # Show the matching tools from every group while the search box has text.
+    def build_search():
+        text = search_var.get().strip().lower()
+        if not text:
+            show_cat()
+            return
+        hits = [o for o in OPS if text in " ".join([o["label"], tr(o["label"]), o["cat"], TOOL_DOCS.get(o["id"], "")]).lower()]
+        fr = page("__search__")
+        ttk.Label(fr, text=f"\U0001F50E  {len(hits)} found for “{search_var.get().strip()}”", style="Head.TLabel").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 6))
+        if hits:
+            fill_buttons(fr, hits, 1)
+        else:
+            ttk.Label(fr, text="Nothing matches. Try a shorter word, for example trim, speed or audio.", style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=20)
+        register_drop_tree(fr)
+        cat_frames["__search__"].tkraise()
+        style_side()
+
+    search_job = {"id": None}
+
+    def on_search(*_):
+        if search_job["id"]:
+            root.after_cancel(search_job["id"])
+        search_job["id"] = root.after(180, build_search)
+    search_var.trace_add("write", on_search)
+    search_ent.bind("<Escape>", lambda e: search_var.set(""))
+
+    # Switch the visible category page (and clear any search).
     def show_cat():
         settings["cat"] = cat_var.get()
         save_settings(settings)
+        if search_var.get():
+            search_var.set("")
+            return
         fr = cat_frames.get(cat_var.get())
         if fr is not None:
             fr.tkraise()
+        style_side()
+
+    # Sidebar: one row per group with an icon, its tool count and a gold marker on the selected group.
+    side_rows = {}
+
+    def style_side():
+        p = pal()
+        searching = bool(search_var.get().strip())
+        for cat, (rw, mark, ic, nm, ct) in side_rows.items():
+            on = cat == cat_var.get() and not searching
+            bg = p["side_sel"] if on else p["bg"]
+            for x in (rw, ic, nm, ct):
+                x.configure(bg=bg)
+            mark.configure(bg=GOLD if on else bg)
+            ic.configure(fg=GOLD if on else p["muted"])
+            nm.configure(fg=p["fg"], font=f_bold if on else f_base)
+            ct.configure(fg=p["muted"])
+            n = len(settings.get("favs", [])) if cat == "Favourites" else sum(1 for o in OPS if o["cat"] == cat)
+            ct.configure(text=str(n))
+
+    def select_cat(cat):
+        cat_var.set(cat)
+        show_cat()
+
+    def build_side():
+        for w in side.winfo_children():
+            w.destroy()
+        side_rows.clear()
+        for cat in ["Favourites"] + CATEGORIES:
+            rw = tk.Frame(side, cursor="hand2", takefocus=1)
+            mark = tk.Frame(rw, width=4)
+            mark.pack(side="left", fill="y")
+            ic = tk.Label(rw, text=CAT_ICONS.get(cat, ""), font=f_bold, width=3)
+            ic.pack(side="left", pady=9)
+            nm = tk.Label(rw, text=cat, anchor="w", width=17)
+            nm.pack(side="left", fill="x", expand=True)
+            ct = tk.Label(rw, font=f_small, width=3, anchor="e")
+            ct.pack(side="right", padx=(0, 8))
+            for x in (rw, ic, nm, ct):
+                x.bind("<Button-1>", lambda e, c=cat: select_cat(c))
+            rw.bind("<Return>", lambda e, c=cat: select_cat(c))
+            rw.bind("<space>", lambda e, c=cat: select_cat(c))
+            rw.pack(fill="x", pady=2)
+            side_rows[cat] = (rw, mark, ic, nm, ct)
+        style_side()
+    rethemers.append(lambda: style_side())
 
     # Drag-and-drop a file/folder onto the window (tkinterdnd2).
     def on_drop(event):
@@ -3145,9 +3692,10 @@ def gui():
         for c in w.winfo_children():
             register_drop_tree(c)
 
-    for cat in ["Favourites"] + CATEGORIES:
-        ttk.Radiobutton(side, text=f"{CAT_ICONS.get(cat, '')}  {cat}", variable=cat_var, value=cat, style="Side.Toolbutton",
-                        width=22, command=show_cat).pack(fill="x", pady=2)
+    build_side()
+    refresh_gpu_ui()
+    status_dot()
+    info_changed()
     # ------------------------------------------------------------------ helpers used by dialogs / worker
     # Append a line to the log box (always called on the GUI thread via the queue).
     def log(msg):
@@ -3200,6 +3748,8 @@ def gui():
                     logbox.see("end")
                     logbox.configure(state="disabled")
                     status_var.set(f"Finished: {ok} ok, {fail} failed")
+                    if fail:
+                        set_details(True)
         except queue.Empty:
             pass
         root.after(100, pump)
