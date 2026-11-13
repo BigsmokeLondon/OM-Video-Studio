@@ -1,0 +1,48 @@
+name: Bug report
+description: Something went wrong or a tool gave the wrong result
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The log file tells us most of what we need, so **please attach it**.
+        **Where the log is:** `%LOCALAPPDATA%\O.M. Video Studio\om_video_studio_log.txt` (paste that into the File Explorer address bar). On a Mac: `~/Library/Application Support/O.M. Video Studio/`.
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Shown in the header of the window and in About.
+      placeholder: "1.15.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows 11, Windows 10, macOS (Apple Silicon), macOS (Intel), Other]
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: Which tool?
+      placeholder: "Trim / cut by time"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Steps to make it happen again help a lot. Mention the kind of file (for example a 4K MP4 from a phone).
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log file
+      description: Drag om_video_studio_log.txt into this box to attach it. It contains file names and paths from your PC, so check it first if that matters to you.
+    validations:
+      required: true
+  - type: textarea
+    id: gpu
+    attributes:
+      label: Check GPU result (only for encoding or speed problems)
+      description: Press Check GPU in the bottom bar and paste what it says.

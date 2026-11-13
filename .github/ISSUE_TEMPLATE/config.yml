@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Illustrated guide
+    url: https://github.com/BigsmokeLondon/OM-Video-Studio/blob/main/docs/ABOUT.md
+    about: Every tool explained with a screenshot. Check here first.

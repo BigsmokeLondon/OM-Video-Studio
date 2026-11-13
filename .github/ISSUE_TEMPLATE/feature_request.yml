@@ -1,0 +1,15 @@
+name: Feature request
+description: Suggest a new tool or an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like to be able to do?
+      description: Describe the job you are trying to get done, not just the button.
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: How do you do it today?

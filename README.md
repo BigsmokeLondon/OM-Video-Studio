@@ -13,42 +13,7 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 
 **New in 1.15.0:** **Uses your graphics card automatically.** NVIDIA, AMD, Intel and Apple hardware encoders are detected at start-up and used when found, with an automatic fall back to the CPU. A **Check GPU** button shows what was found and a **Use GPU** box turns it off. **New look:** the company is now O.M. Industries Inc, with a new logo in the header and a colour splash screen. **About button:** lists every tool with a description, and opens the [illustrated guide](docs/ABOUT.md) with a screenshot of every tool.
 
-**New in 1.14.0:** **Clip timeline for Join clips and Join with crossfade.** Every clip shows as a block in order, with its first frame, name and length. Drag a block to change the order, and see the total length (with the crossfade overlaps taken off). The previews now show the first clip and the one that follows it, even when the Input box is empty.
-
-**New in 1.13.0:** **Bigger, scrubbable previews everywhere.** Every window with a preview can now be stretched (the pictures grow with it), and the Before/After and Crop previews have a **Preview at** slider, so you can check an effect at any moment in the video.
-
-**New in 1.12.0:** **Film strip with draggable handles in more tools.** Trim audio (a waveform), Make a GIF, Speed ramp and Add a title now have the same timeline as Trim: drag the two handles to choose the part, and the boxes and sliders follow. Play selection plays just that part.
-
-**New in 1.11.0:** **Play a sample before you run.** Effects, resize/crop/rotate, speed, title and timer, and audio operations (volume, loudness, tempo, pitch, denoise, equaliser, fades, music and narration) now have a **Play sample** button. It makes a few seconds with your exact settings and plays it with sound, so you can check the result before running the whole job.
-
-**New in 1.10.0:** **Play your Trim before you cut.** A new **Play selection** button plays just the part between your Start and End handles, with sound, in its own player window (and a Stop button). The time labels on the film strip are now much larger and easier to read.
-
-**New in 1.9.0:** **Smoother Trim.** Dragging a Start or End handle now shows the picture instantly (from a small frame cache built in the background when you open Trim), and the sharp exact frame follows when you let go.
-
-**New in 1.8.0:** **Trim now has a film strip.** A row of thumbnails across the whole video, with a time ruler and two draggable gold handles for Start and End (the parts being cut out are dimmed). The preview is larger and shows the frame at whichever handle you moved last, and the Trim window can be stretched to get a bigger view. The Start and End boxes, sliders and nudge buttons stay in step with the handles.
-
-**New in 1.7.0:** **macOS version (experimental).** Download `OM-Video-Studio-macOS-arm64.zip` (Apple Silicon: M1 and newer) or `OM-Video-Studio-macOS-intel.zip` (Intel Macs) from the release page. See *Install on a Mac* below. The Windows app is unchanged.
-
-**New in 1.6.2:** Pressing a tool with no input file or folder chosen now plays the Windows alert sound, explains what to do, and puts the cursor in the Input box. (Join, Crossfade and Slideshow still let you list clips inside their own window.)
-
-**New in 1.6.1:** **Full file report** now saves a readable `full report <file name>.txt` (summary first, then the complete ffprobe data) in the output folder and opens it in Notepad.
-
-**New in 1.6.0:**
-- **13 languages.** Pick one from the drop-down at the top right: Urdu, Bengali, Nepali, Arabic, Russian, Hindi, Punjabi, Spanish, French, German, Portuguese, Italian and Turkish (plus English). The app offers to restart to switch. Menus, buttons, operation names and option labels are translated; longer help sentences and some messages stay in English. Arabic and Urdu text is shown correctly, but the window layout is not mirrored right-to-left.
-- **Completion sounds.** A short two-note ping when a job finishes, a different, longer rising chime when a batch or queue finishes, and a low falling tone if everything failed. Tick or untick **Sound** in the bottom bar to turn them on or off.
-
-**New in 1.5.0:** **Resize** now has a size dropdown from 144p / 240p / 320p up to 4K and 8K (with a "never enlarge" tick box), sliders for custom sizes, and a before/after preview that also shows the old and new pixel size.
-
-**New in 1.4.0:**
-- **Sliders everywhere they make sense.** Trim, Trim audio, Thumbnail, GIF, Freeze frame, Split, Fades, Crop (width, height and position), Silence removal, text start/end times and more now have sliders under the boxes. Time boxes use a **minutes:seconds:milliseconds** counter (e.g. `001:22:400`), with -1s / -.1s / +.1s / +1s nudge buttons for exact cuts. Typing in the box moves the slider, and the other way round.
-- **Live before/after preview for every video and image operation**, not just Trim and Crop. Change an option and the preview frame updates.
-
-**New in 1.3.0:**
-- **Job queue.** Select several files at once (Browse files… or drop them together), then use **Add to queue** in any operation's window. Line up different operations, reorder them in the **Queue** window and run the lot with one click.
-- **Live preview for Trim and Crop.** The window shows the start and end frames of your cut, or the cropped result, and updates as you type.
-- **Copy ffmpeg command.** Every operation window has a button that copies the exact ffmpeg command to the clipboard, and **Copy last command** in the bottom bar copies the one just run. Handy for learning ffmpeg or scripting.
-
-**New in 1.2.0:** *Export for social media* under Format & Quality. Pick TikTok, Instagram Reels, YouTube Shorts, YouTube, X or Instagram feed, and the app resizes, re-encodes (H.264 + AAC, fast-start MP4) and fills any spare space with a blurred background, black bars or a crop.
+Older versions: see the [changelog](CHANGELOG.md).
 
 ## Install (Windows 10/11)
 
