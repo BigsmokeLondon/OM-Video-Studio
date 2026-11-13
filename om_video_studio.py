@@ -2726,6 +2726,7 @@ def gui():
     def set_fsize(delta):
         fsize["v"] = max(10, min(22, fsize["v"] + delta))
         apply_styles()
+        retheme()
         settings["fsize"] = fsize["v"]
         save_settings(settings)
 
@@ -2836,36 +2837,103 @@ def gui():
             root.configure(bg=p["bg"])
         except tk.TclError:
             pass
+        alive = []
         for w, opts in list(themed):
             try:
                 w.configure(**{k: p[v] for k, v in opts.items()})
+                alive.append((w, opts))
             except tk.TclError:
-                pass
+                pass  # widget was destroyed: forget it
+        themed[:] = alive
         for fn in list(rethemers):
             try:
                 fn()
+            except tk.TclError:
+                if fn in rethemers:
+                    rethemers.remove(fn)
             except Exception:  # noqa: BLE001
                 pass
 
-    # A flat clickable label used as a button (gold = main action, ghost = bordered, hdr = on the navy header).
-    def flat_btn(parent, text, command, kind="ghost", font=None):
-        if kind == "gold":
-            b = tk.Label(parent, text=text, font=font or f_bold, bg=GOLD, fg=ON_GOLD, padx=18, pady=9, cursor="hand2")
-            reg(b, bg="gold")
-            b.bind("<Enter>", lambda e: b.configure(bg=GOLD_HOVER))
-            b.bind("<Leave>", lambda e: b.configure(bg=GOLD))
-        elif kind == "hdr":
-            b = tk.Label(parent, text=text, font=font or f_base, bg=BRAND_BG, fg="#c9d6e6", padx=12, pady=7, cursor="hand2")
-            reg(b, bg="brand")
-            b.bind("<Enter>", lambda e: b.configure(bg="#1d4470", fg="#ffffff"))
-            b.bind("<Leave>", lambda e: b.configure(bg=BRAND_BG, fg="#c9d6e6"))
-        else:
-            b = tk.Label(parent, text=text, font=font or f_base, padx=14, pady=8, cursor="hand2", highlightthickness=1)
-            reg(b, bg="panel", fg="fg", highlightbackground="border")
-            b.bind("<Enter>", lambda e: b.configure(bg=pal()["hover"]))
-            b.bind("<Leave>", lambda e: b.configure(bg=pal()["panel"]))
-        b.bind("<Button-1>", lambda e: command())
-        return b
+    # Rounded rectangle on a canvas (a smoothed polygon).
+    def rrect(cv, x1, y1, x2, y2, r, **kw):
+        pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+        return cv.create_polygon(pts, smooth=True, **kw)
+
+    # A panel with rounded corners. Returns (canvas, inner frame): pack/grid the canvas, put the content in the inner frame.
+    def round_frame(parent, fill="panel", line="border", r=10, bgkey="bg"):
+        m = max(3, r // 2)
+        cv = tk.Canvas(parent, highlightthickness=0, bd=0, height=20)
+        reg(cv, bg=bgkey)
+        inner = reg(tk.Frame(cv), bg=fill)
+        win = cv.create_window(m, m, window=inner, anchor="nw")
+
+        def draw(*_):
+            w, h = cv.winfo_width(), cv.winfo_height()
+            if w < 8 or h < 8:
+                return
+            p = pal()
+            try:
+                cv.delete("bg")
+                rrect(cv, 1, 1, w - 1, h - 1, r, fill=p[fill], outline=p[line], tags="bg")
+                cv.tag_lower("bg")
+                cv.itemconfigure(win, width=w - 2 * m, height=h - 2 * m)
+            except tk.TclError:
+                pass
+
+        def fit(_e=None):
+            try:
+                cv.configure(height=inner.winfo_reqheight() + 2 * m)
+            except tk.TclError:
+                pass
+        cv.bind("<Configure>", draw)
+        inner.bind("<Configure>", fit)
+        rethemers.append(draw)
+        cv.redraw = draw
+        return cv, inner
+
+    # A rounded button drawn on a canvas (gold = main action, ghost = bordered, hdr = on the navy header).
+    def flat_btn(parent, text, command, kind="ghost", font=None, bgkey=None):
+        fnt = font or (f_bold if kind == "gold" else f_base)
+        padx, pady = {"gold": (18, 9), "hdr": (12, 7)}.get(kind, (14, 8))
+        bgkey = bgkey or ("brand" if kind == "hdr" else "panel")
+        cv = tk.Canvas(parent, highlightthickness=0, bd=0, cursor="hand2")
+        reg(cv, bg=bgkey)
+        st = {"hover": False, "text": tr(text)}
+
+        def draw(*_):
+            p = pal()
+            try:
+                w = fnt.measure(st["text"]) + 2 * padx
+                h = fnt.metrics("linespace") + 2 * pady
+                cv.configure(width=w, height=h)
+                cv.delete("all")
+                if kind == "gold":
+                    fill = line = GOLD_HOVER if st["hover"] else GOLD
+                    fg = ON_GOLD
+                elif kind == "hdr":
+                    fill = line = "#1d4470" if st["hover"] else BRAND_BG
+                    fg = "#ffffff" if st["hover"] else "#c9d6e6"
+                else:
+                    fill, line, fg = (p["hover"] if st["hover"] else p["panel"]), p["border"], p["fg"]
+                rrect(cv, 1, 1, w - 1, h - 1, 9, fill=fill, outline=line)
+                cv.create_text(w // 2, h // 2, text=st["text"], font=fnt, fill=fg)
+            except tk.TclError:
+                pass
+
+        def hov(on):
+            st["hover"] = on
+            draw()
+
+        def set_text(t):
+            st["text"] = tr(t)
+            draw()
+        cv.set_text = set_text
+        cv.bind("<Enter>", lambda e: hov(True))
+        cv.bind("<Leave>", lambda e: hov(False))
+        cv.bind("<Button-1>", lambda e: command())
+        rethemers.append(draw)
+        draw()
+        return cv
 
     # On/off switch drawn on a canvas (gold when on).
     def make_switch(parent, var, command=None):
@@ -2945,8 +3013,8 @@ def gui():
     chips_state = {"items": []}
     hint = "Drag a file or folder onto this window, or use the buttons on the right." if dnd else "Choose a file or a folder with the buttons on the right. (pip install tkinterdnd2 adds drag-and-drop.)"
     info_var.set(hint)
-    card = reg(tk.Frame(root, highlightthickness=1), bg="panel", highlightbackground="border")
-    card.pack(fill="x", padx=14, pady=(10, 4))
+    card_cv, card = round_frame(root, "panel", "border", 12)
+    card_cv.pack(fill="x", padx=14, pady=(10, 4))
     card.columnconfigure(1, weight=1)
     thumb_box = reg(tk.Frame(card, width=172, height=100), bg="chip")
     thumb_box.grid(row=0, column=0, rowspan=2, sticky="nw", padx=12, pady=12)
@@ -3154,8 +3222,8 @@ def gui():
     # ------------------------------------------------------------------ bottom bar (packed first so the body can expand)
     bot = reg(tk.Frame(root), bg="bg")
     bot.pack(side="bottom", fill="x")
-    row = reg(tk.Frame(bot, highlightthickness=1), bg="panel", highlightbackground="border")
-    row.pack(side="bottom", fill="x", padx=14, pady=(4, 10))
+    row_cv, row = round_frame(bot, "panel", "border", 12)
+    row_cv.pack(side="bottom", fill="x", padx=14, pady=(4, 10))
     # Details panel: the full log. Hidden until "Show details" is pressed (opens by itself when something fails).
     detail = reg(tk.Frame(bot), bg="bg")
     dhead = reg(tk.Frame(detail), bg="bg")
@@ -3192,7 +3260,7 @@ def gui():
     def set_details(on):
         det["on"] = bool(on)
         if on:
-            detail.pack(fill="x", padx=14, pady=(6, 0), before=row)
+            detail.pack(fill="x", padx=14, pady=(6, 0), before=row_cv)
             details_btn.configure(text="Hide details")
         else:
             detail.pack_forget()
@@ -3246,7 +3314,7 @@ def gui():
             return
         btn = gpu_ui.get("btn")
         try:
-            btn.configure(state="disabled", text="Checking...")
+            btn.set_text("Checking...")
         except (tk.TclError, AttributeError):
             pass
 
@@ -3256,7 +3324,7 @@ def gui():
 
         def done(text, key):
             try:
-                btn.configure(state="normal", text="Check graphics card")
+                btn.set_text("Check graphics card")
             except (tk.TclError, AttributeError):
                 pass
             if key:
@@ -3386,7 +3454,7 @@ def gui():
         sw.pack(side="right")
         gpu_ui["status"], gpu_ui["switch"] = sub, sw
         fr, _ = line("")
-        gbtn = flat_btn(fr, "Check graphics card", check_gpu, "ghost")
+        gbtn = flat_btn(fr, "Check graphics card", check_gpu, "ghost", bgkey="bg")
         gbtn.pack(side="left")
         gpu_ui["btn"] = gbtn
         refresh_gpu_ui()
@@ -3519,23 +3587,39 @@ def gui():
     # One tool card: icon, short title and a grey one-line description. The whole card is clickable.
     def make_card(parent, spec):
         p = pal()
-        c = tk.Frame(parent, bg=p["panel"], highlightthickness=1, highlightbackground=p["border"], highlightcolor=GOLD, cursor="hand2", takefocus=1)
+        outer, c = round_frame(parent, "panel", "border", 12)
+        c.configure(cursor="hand2", takefocus=1)
         c.columnconfigure(1, weight=1)
         icon = TOOL_ICONS.get(spec["id"]) or CAT_ICONS.get(spec["cat"], "")
         ic = tk.Label(c, text=icon, font=f_icon, bg=p["panel"], fg=GOLD, width=2)
-        ic.grid(row=0, column=0, rowspan=2, padx=(10, 4), pady=10)
+        ic.grid(row=0, column=0, rowspan=2, padx=(8, 4), pady=8)
         title = tr(spec["label"]).split(" (")[0]
         tl = tk.Label(c, text=title, font=f_bold, bg=p["panel"], fg=p["fg"], anchor="w", justify="left")
-        tl.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=(10, 0))
+        tl.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=(8, 0))
         dl = tk.Label(c, text=short_doc(spec), font=f_small, bg=p["panel"], fg=p["muted"], anchor="nw", justify="left")
-        dl.grid(row=1, column=1, sticky="new", padx=(0, 10), pady=(0, 10))
-        parts = (c, ic, tl, dl)
+        dl.grid(row=1, column=1, sticky="new", padx=(0, 8), pady=(0, 8))
+        for x in (ic, tl, dl):
+            themed.append((x, {"bg": "panel"}))
+        tl_fg = (tl, {"fg": "fg"})
+        themed.append(tl_fg)
+        themed.append((dl, {"fg": "muted"}))
+        themed.append((ic, {"fg": "gold"}))
+
+        def inside():
+            try:
+                x, y = outer.winfo_pointerxy()
+                return outer.winfo_rootx() <= x < outer.winfo_rootx() + outer.winfo_width() and outer.winfo_rooty() <= y < outer.winfo_rooty() + outer.winfo_height()
+            except tk.TclError:
+                return False
 
         def hover(on):
-            c.configure(highlightbackground=GOLD if on else pal()["border"])
-        c.bind("<Enter>", lambda e: hover(True))
-        c.bind("<Leave>", lambda e: hover(False))
-        for x in parts:
+            try:
+                outer.itemconfigure("bg", outline=GOLD if on else pal()["border"])
+            except tk.TclError:
+                pass
+        for x in (outer, c, ic, tl, dl):
+            x.bind("<Enter>", lambda e: hover(True))
+            x.bind("<Leave>", lambda e: hover(inside()))
             x.bind("<Button-1>", lambda e, s=spec: open_op(s))
         c.bind("<Return>", lambda e, s=spec: open_op(s))
         c.bind("<space>", lambda e, s=spec: open_op(s))
@@ -3544,8 +3628,8 @@ def gui():
             w_ = max(120, e.width - 70)
             tl.configure(wraplength=w_)
             dl.configure(wraplength=w_)
-        c.bind("<Configure>", wrap)
-        return c
+        c.bind("<Configure>", wrap, add="+")
+        return outer
 
     # Lay operation cards out in a responsive 3-column grid.
     def fill_buttons(fr, ops, start_row=1):
