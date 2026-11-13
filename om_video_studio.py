@@ -2883,7 +2883,7 @@ def gui():
                 cv.create_oval(0, 0, 26, 26, fill=track, outline=track)
                 cv.create_oval(20, 0, 46, 26, fill=track, outline=track)
                 cv.create_rectangle(13, 0, 33, 26, fill=track, outline=track)
-                x = 26 if on else 3
+                x = 23 if on else 3
                 cv.create_oval(x, 3, x + 20, 23, fill=("#14181d" if on and not dis else "#e8edf2"), outline="")
             except tk.TclError:
                 pass
@@ -3175,7 +3175,7 @@ def gui():
     reg(dot, bg="panel")
     dot.pack(side="left", padx=(12, 6), pady=12)
     dot_item = dot.create_oval(2, 2, 12, 12, fill=GREEN, outline="")
-    status = reg(tk.Label(row, textvariable=status_var, font=f_base, anchor="w", width=34), bg="panel", fg="fg")
+    status = reg(tk.Label(row, textvariable=status_var, font=f_base, anchor="w", width=24), bg="panel", fg="fg")
     status.pack(side="left")
 
     # Colour of the status dot: green = ready / finished, gold = running, red = something failed.
