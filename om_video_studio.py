@@ -2856,8 +2856,13 @@ def gui():
 
     # Rounded rectangle on a canvas (a smoothed polygon).
     def rrect(cv, x1, y1, x2, y2, r, **kw):
-        pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
-        return cv.create_polygon(pts, smooth=True, **kw)
+        r = max(1, min(r, (x2 - x1) // 2, (y2 - y1) // 2))
+        pts = []
+        for cx, cy, a0 in ((x2 - r, y1 + r, -90), (x2 - r, y2 - r, 0), (x1 + r, y2 - r, 90), (x1 + r, y1 + r, 180)):
+            for k in range(9):
+                a = math.radians(a0 + k * 10)
+                pts += [cx + r * math.cos(a), cy + r * math.sin(a)]
+        return cv.create_polygon(pts, **kw)
 
     # A panel with rounded corners. Returns (canvas, inner frame): pack/grid the canvas, put the content in the inner frame.
     def round_frame(parent, fill="panel", line="border", r=10, bgkey="bg"):
@@ -2915,7 +2920,7 @@ def gui():
                     fg = "#ffffff" if st["hover"] else "#c9d6e6"
                 else:
                     fill, line, fg = (p["hover"] if st["hover"] else p["panel"]), p["border"], p["fg"]
-                rrect(cv, 1, 1, w - 1, h - 1, 9, fill=fill, outline=line)
+                rrect(cv, 1, 1, w - 1, h - 1, 12, fill=fill, outline=line)
                 cv.create_text(w // 2, h // 2, text=st["text"], font=fnt, fill=fg)
             except tk.TclError:
                 pass
@@ -3013,7 +3018,7 @@ def gui():
     chips_state = {"items": []}
     hint = "Drag a file or folder onto this window, or use the buttons on the right." if dnd else "Choose a file or a folder with the buttons on the right. (pip install tkinterdnd2 adds drag-and-drop.)"
     info_var.set(hint)
-    card_cv, card = round_frame(root, "panel", "border", 12)
+    card_cv, card = round_frame(root, "panel", "border", 16)
     card_cv.pack(fill="x", padx=14, pady=(10, 4))
     card.columnconfigure(1, weight=1)
     thumb_box = reg(tk.Frame(card, width=172, height=100), bg="chip")
@@ -3222,7 +3227,7 @@ def gui():
     # ------------------------------------------------------------------ bottom bar (packed first so the body can expand)
     bot = reg(tk.Frame(root), bg="bg")
     bot.pack(side="bottom", fill="x")
-    row_cv, row = round_frame(bot, "panel", "border", 12)
+    row_cv, row = round_frame(bot, "panel", "border", 16)
     row_cv.pack(side="bottom", fill="x", padx=14, pady=(4, 10))
     # Details panel: the full log. Hidden until "Show details" is pressed (opens by itself when something fails).
     detail = reg(tk.Frame(bot), bg="bg")
@@ -3587,7 +3592,7 @@ def gui():
     # One tool card: icon, short title and a grey one-line description. The whole card is clickable.
     def make_card(parent, spec):
         p = pal()
-        outer, c = round_frame(parent, "panel", "border", 12)
+        outer, c = round_frame(parent, "panel", "border", 16)
         c.configure(cursor="hand2", takefocus=1)
         c.columnconfigure(1, weight=1)
         icon = TOOL_ICONS.get(spec["id"]) or CAT_ICONS.get(spec["cat"], "")
