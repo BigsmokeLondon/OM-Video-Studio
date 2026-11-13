@@ -11,7 +11,7 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
-**New in 1.15.0:** **Uses your graphics card automatically.** NVIDIA, AMD, Intel and Apple hardware encoders are detected at start-up and used when found, with an automatic fall back to the CPU. A **Check GPU** button shows what was found and a **Use GPU** box turns it off. **New look:** the company is now O.M. Industries Inc, with a new logo in the header and a colour splash screen. **About button:** lists every tool with a description, and opens the [illustrated guide](docs/ABOUT.md) with a screenshot of every tool.
+**New in 1.16.0:** **A new look.** Rounded tool cards with an icon and a one-line description, a search box for all 70 tools, a slimmer header, and a sidebar that shows how many tools each group has. The input area now shows a thumbnail of your file with its length, size and codec, and where the result will be saved. A new **Settings** window (the gear in the header) holds the theme, language, text size, the graphics card switch and Check graphics card button, the sounds, and the option to show ffmpeg commands. The log is tucked away behind **Show details** and opens by itself if a job fails. Buttons are now **Choose files** and **Whole folder**.
 
 Older versions: see the [changelog](CHANGELOG.md).
 
