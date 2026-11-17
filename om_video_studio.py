@@ -4468,6 +4468,11 @@ def gui():
         def stop_play():
             p_ = play["proc"]
             play["proc"] = None
+            play["t0"] = None
+            try:
+                cv.delete("ph")
+            except tk.TclError:
+                pass
             if p_ is not None and p_.poll() is None:
                 try:
                     p_.terminate()
@@ -4494,6 +4499,8 @@ def gui():
                 cmd += ["-x", "960"] if S.get("vw", 16) >= S.get("vh", 9) else ["-y", "720"]
             try:
                 play["proc"] = subprocess.Popen(cmd + ["-i", src], creationflags=NO_WINDOW)
+                play["t0"], play["s"], play["e"] = time.monotonic(), s_, e_
+                tick()
             except OSError as e:
                 messagebox.showinfo(APP, f"Couldn't start the player: {e}", parent=top_)
         brow = ttk.Frame(box)
@@ -4665,6 +4672,43 @@ def gui():
             ly0 = RULER + 6 if ce - cs > tw + 24 else h_ - lh - 6  # a short selection: the label sits low, clear of the handles
             cv.create_rectangle(cx - tw / 2, ly0, cx + tw / 2, ly0 + lh, fill="#000000", outline=BRAND_GOLD)
             cv.create_text(cx, ly0 + lh / 2, text=txt, fill=BRAND_GOLD, font=f_base)
+            draw_ph()
+
+        # Moving play marker: a red line with the time, so you can hear where to cut (the player starts about a quarter of a second late).
+        def draw_ph():
+            cv.delete("ph")
+            if play.get("t0") is None:
+                return
+            pos = play.get("pos", play["s"])
+            x = x_of(pos)
+            if x < PAD or x > PAD + S["sw"]:
+                return
+            cv.create_line(x, RULER - 2, x, RULER + S["th"], fill="#ff4040", width=2, tags="ph")
+            txt_ = fmt_ms(pos)
+            tw_ = f_base.measure(txt_) + 10
+            lx = min(max(x + 4, PAD), int(cv.cget("width")) - tw_ - 2)
+            ly = RULER + S["th"] - f_base.metrics("linespace") - 8
+            cv.create_rectangle(lx, ly, lx + tw_, ly + f_base.metrics("linespace") + 4, fill="#000000", outline="#ff4040", tags="ph")
+            cv.create_text(lx + 5, ly + 2, text=txt_, anchor="nw", fill="#ff8080", font=f_base, tags="ph")
+
+        def tick():
+            p_ = play["proc"]
+            if p_ is None or p_.poll() is not None or not alive() or play.get("t0") is None:
+                play["proc"] = None
+                play["t0"] = None
+                if alive():
+                    cv.delete("ph")
+                return
+            pos = min(play["e"], play["s"] + max(0.0, time.monotonic() - play["t0"] - 0.25))
+            play["pos"] = pos
+            v0_, v1_ = view()
+            if cfg.get("audio") and v1_ - v0_ < S["dur"] - 0.05 and not (v0_ <= pos <= v1_) and st.get("resize_strip"):
+                try:
+                    set_view(pos - (v1_ - v0_) * 0.1, pos + (v1_ - v0_) * 0.9)  # follow the marker when zoomed in
+                except NameError:
+                    pass
+            draw_ph()
+            top_.after(40, tick)
 
         def track(*_):
             """Remember which handle changed last (the big preview follows it), then redraw."""
