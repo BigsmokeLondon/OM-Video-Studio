@@ -4674,7 +4674,7 @@ def gui():
         threading.Thread(target=work, daemon=True).start()
 
         # Window stretched: re-tile the strip for the new width (cached per width).
-        def resize_strip(new_pw):
+        def resize_strip(new_pw, th=None):
             S["tok"] = S.get("tok", 0) + 1
             tok = S["tok"]
 
@@ -4686,7 +4686,7 @@ def gui():
                         inf = probe(src)
                         dur = float(inf["dur"] or 0)
                         if cfg.get("audio"):
-                            png, sw, sh = make_wave(src, dur, new_pw - 2 * PAD)
+                            png, sw, sh = make_wave(src, dur, new_pw - 2 * PAD, th or 64)
                         else:
                             png, sw, sh = make_strip(src, dur, int(inf["w"] or 0), int(inf["h"] or 0), cw=new_pw - 2 * PAD)
                 except Exception as e:  # noqa: BLE001
@@ -5104,7 +5104,43 @@ def gui():
         box.grid(row=0, column=3, rowspan=max(nrows, 4), sticky="n", padx=(18, 0))
         if spec["id"] == "atrim":  # audio file: no pictures, just the waveform with its two handles
             box.configure(text="Selection")
-            attach_strip(top_, box, tkvars, cur_src, {"n": 0, "after": None, "imgs": [], "focus": "start"}, q, 430, STRIP_OPS["atrim"])
+            ast = {"n": 0, "after": None, "imgs": [], "focus": "start"}
+            attach_strip(top_, box, tkvars, cur_src, ast, q, 430, STRIP_OPS["atrim"])
+            # Window stretched or filled to the screen: the waveform moves under the tool, takes the whole width and gets taller.
+            home = dict(box.grid_info())
+            A = {"after": None, "big": False, "base": 0, "pw": 430, "th": 64}
+
+            def wave_layout():
+                A["after"] = None
+                if not top_.winfo_exists():
+                    return
+                wd, ht = top_.winfo_width(), top_.winfo_height()
+                if not A["big"]:
+                    A["base"] = max(A["base"], top_.winfo_reqwidth())
+                big = wd > A["base"] + 120
+                if big:
+                    pw_, th_ = max(430, wd - 90), int(min(420, max(96, ht - 330)))
+                    if not A["big"]:
+                        box.grid_configure(row=nrows + 1, column=0, columnspan=4, rowspan=1, sticky="ew", padx=0, pady=(14, 0))
+                else:
+                    pw_, th_ = 430, 64
+                    if A["big"]:
+                        box.grid_configure(row=home.get("row", 0), column=home.get("column", 3), columnspan=1, rowspan=home.get("rowspan", 1), sticky=home.get("sticky", "n"), padx=(18, 0), pady=0)
+                A["big"] = big
+                if (pw_, th_) != (A["pw"], A["th"]) and ast.get("resize_strip"):
+                    A["pw"], A["th"] = pw_, th_
+                    ast["resize_strip"](pw_, th_)
+
+            def wave_cfg(e):
+                if e.widget is not top_:
+                    return
+                if A["after"]:
+                    try:
+                        top_.after_cancel(A["after"])
+                    except tk.TclError:
+                        pass
+                A["after"] = top_.after(300, wave_layout)
+            top_.bind("<Configure>", wave_cfg, add="+")
             return
         strip_cfg = STRIP_OPS.get(spec["id"])
         is_trim = spec["id"] == "trim"
