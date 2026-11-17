@@ -4524,10 +4524,15 @@ def gui():
             if S["dur"] <= 0 or not cfg.get("audio"):
                 return
             v0, v1 = view()
-            at = (v0 + v1) / 2 if at is None else at
+            s_, e_ = times()
+            c_ = (s_ + e_) / 2
+            at = c_ if v0 <= c_ <= v1 else (v0 + v1) / 2  # zoom around the selection so it stays on screen
             L = (v1 - v0) / factor
             frac = (at - v0) / (v1 - v0)
-            set_view(at - frac * L, at - frac * L + L)
+            n0 = at - frac * L
+            if e_ - s_ <= L:  # the whole selection fits: keep it fully in view
+                n0 = max(min(n0, s_), e_ - L)
+            set_view(n0, n0 + L)
 
         def pan(frac):
             if S["dur"] <= 0 or not cfg.get("audio"):
