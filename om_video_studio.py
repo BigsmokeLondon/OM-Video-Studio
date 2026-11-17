@@ -4653,11 +4653,13 @@ def gui():
             # length of the selection (the delta between the two handles), centred at the top of the box
             txt = "Length " + fmt_ms(max(0.0, e_ - s_))
             tw = f_base.measure(txt) + 14
-            if ce - cs > tw + 24:
-                cx = (cs + ce) / 2
-                lh = f_base.metrics("linespace") + 6
-                cv.create_rectangle(cx - tw / 2, RULER + 6, cx + tw / 2, RULER + 6 + lh, fill="#000000", outline=BRAND_GOLD)
-                cv.create_text(cx, RULER + 6 + lh / 2, text=txt, fill=BRAND_GOLD, font=f_base)
+            cx = (cs + ce) / 2
+            lh = f_base.metrics("linespace") + 6
+            cw_ = int(cv.cget("width"))
+            cx = min(max(cx, tw / 2 + 2), cw_ - tw / 2 - 2)  # keep the label inside the picture
+            ly0 = RULER + 6 if ce - cs > tw + 24 else h_ - lh - 6  # a short selection: the label sits low, clear of the handles
+            cv.create_rectangle(cx - tw / 2, ly0, cx + tw / 2, ly0 + lh, fill="#000000", outline=BRAND_GOLD)
+            cv.create_text(cx, ly0 + lh / 2, text=txt, fill=BRAND_GOLD, font=f_base)
 
         def track(*_):
             """Remember which handle changed last (the big preview follows it), then redraw."""
