@@ -4463,12 +4463,18 @@ def gui():
 
         # Play selection: opens ffplay in its own window with sound, playing only the part between
         #  the two handles. (tkinter has no built-in video player, so this is the closest thing.)
-        play = {"proc": None}
+        play = {"proc": None, "hold": None}
 
-        def stop_play():
+        def stop_play(keep=False):
             p_ = play["proc"]
             play["proc"] = None
             play["t0"] = None
+            if not keep:
+                play["hold"] = None
+                try:
+                    pbtn.configure(text="⏸  Pause")
+                except (NameError, tk.TclError):
+                    pass
             try:
                 cv.delete("ph")
             except tk.TclError:
@@ -4479,7 +4485,7 @@ def gui():
                 except OSError:
                     pass
 
-        def play_sel():
+        def play_sel(start=None):
             stop_play()
             src = cur_src()
             if not src or S["dur"] <= 0:
@@ -4491,6 +4497,8 @@ def gui():
                                     "The ffmpeg that this app downloads includes it.", parent=top_)
                 return
             s_, e_ = times()
+            if start is not None and s_ <= start < e_ - 0.05:
+                s_ = start  # resume from the paused marker
             cmd = [ff, "-hide_banner", "-loglevel", "error", "-autoexit", "-ss", f"{s_:.3f}", "-t", f"{max(0.1, e_ - s_):.3f}",
                    "-window_title", "Your selection - close this window to stop"]
             if cfg.get("audio"):
@@ -4500,6 +4508,7 @@ def gui():
             try:
                 play["proc"] = subprocess.Popen(cmd + ["-i", src], creationflags=NO_WINDOW)
                 play["t0"], play["s"], play["e"] = time.monotonic(), s_, e_
+                pbtn.configure(text="⏸  Pause")
                 tick()
             except OSError as e:
                 messagebox.showinfo(APP, f"Couldn't start the player: {e}", parent=top_)
@@ -4507,6 +4516,36 @@ def gui():
         brow.pack(fill="x", pady=(0, 6))
         ttk.Button(brow, text="▶  Play selection (with sound)", command=play_sel).pack(side="left")
         ttk.Button(brow, text="■  Stop", command=stop_play).pack(side="left", padx=(6, 0))
+
+        # Pause keeps a green marker where the sound stopped; drag a yellow edge onto it (it snaps) or use the Start here / End here buttons.
+        def pause_or_resume():
+            if play["proc"] is not None and play.get("t0") is not None:
+                pos = play.get("pos", play["s"])
+                stop_play(keep=True)
+                play["hold"] = pos
+                pbtn.configure(text="▶  Resume")
+                redraw()
+            elif play.get("hold") is not None:
+                play_sel(start=play["hold"])
+
+        brow2 = ttk.Frame(box)
+        brow2.pack(fill="x", pady=(0, 6))
+        pbtn = ttk.Button(brow2, text="⏸  Pause", command=pause_or_resume)
+        pbtn.pack(side="left")
+
+        def set_here(which):
+            t = play.get("hold")
+            if t is None:
+                return
+            s_, e_ = times()
+            if which == "a":
+                tkvars[KA].set(FMT[cfg["fa"]](min(t, max(0.0, e_ - 0.1))))
+            else:
+                t = max(t, s_ + 0.1)
+                tkvars[KB].set("" if (cfg["blank"] and t >= S["dur"] - 0.05) else FMT[cfg["fb"]](t if cfg["blank"] else min(t, S["dur"] - 0.1)))
+        if not WINDOW:
+            ttk.Button(brow2, text="Start here", command=lambda: set_here("a")).pack(side="left", padx=(6, 0))
+            ttk.Button(brow2, text="End here", command=lambda: set_here("b")).pack(side="left", padx=(6, 0))
         zt = {"after": None}
 
         def zoom_render():
@@ -4674,22 +4713,24 @@ def gui():
             cv.create_text(cx, ly0 + lh / 2, text=txt, fill=BRAND_GOLD, font=f_base)
             draw_ph()
 
-        # Moving play marker: a red line with the time, so you can hear where to cut (the player starts about a quarter of a second late).
+        # Moving play marker: a green line with the time, so you can hear where to cut (the player starts about a quarter of a second late).
+        PH, PHT = "#22c55e", "#86efac"  # green marker
+
         def draw_ph():
             cv.delete("ph")
-            if play.get("t0") is None:
+            if play.get("t0") is None and play.get("hold") is None:
                 return
-            pos = play.get("pos", play["s"])
+            pos = play["hold"] if play.get("t0") is None else play.get("pos", play["s"])
             x = x_of(pos)
             if x < PAD or x > PAD + S["sw"]:
                 return
-            cv.create_line(x, RULER - 2, x, RULER + S["th"], fill="#ff4040", width=2, tags="ph")
+            cv.create_line(x, RULER - 2, x, RULER + S["th"], fill=PH, width=2, tags="ph")
             txt_ = fmt_ms(pos)
             tw_ = f_base.measure(txt_) + 10
             lx = min(max(x + 4, PAD), int(cv.cget("width")) - tw_ - 2)
             ly = RULER + S["th"] - f_base.metrics("linespace") - 8
-            cv.create_rectangle(lx, ly, lx + tw_, ly + f_base.metrics("linespace") + 4, fill="#000000", outline="#ff4040", tags="ph")
-            cv.create_text(lx + 5, ly + 2, text=txt_, anchor="nw", fill="#ff8080", font=f_base, tags="ph")
+            cv.create_rectangle(lx, ly, lx + tw_, ly + f_base.metrics("linespace") + 4, fill="#000000", outline=PH, tags="ph")
+            cv.create_text(lx + 5, ly + 2, text=txt_, anchor="nw", fill=PHT, font=f_base, tags="ph")
 
         def tick():
             p_ = play["proc"]
@@ -4754,6 +4795,9 @@ def gui():
                 hover(e.x)
                 return
             t = t_of(e.x)
+            hd = play.get("hold")
+            if hd is not None and abs(x_of(hd) - e.x) < 10:
+                t = hd  # snap to the green marker
             s_, e_ = times()
             if S["drag"] == "start":
                 t = min(t, max(0.0, e_ - 0.1))
