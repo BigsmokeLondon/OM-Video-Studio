@@ -602,7 +602,7 @@ def crop_filter(o):
 @op("Video", "crop", "Crop",
     [O("w", "Width", default="min(iw,ih)"), O("h", "Height", default="min(iw,ih)"),
      O("x", "X offset", default="(iw-ow)/2"), O("y", "Y offset", default="(ih-oh)/2")],
-    tip="Defaults crop a centred square. Expressions like iw/2 work.")
+    tip="Drag the box on the picture to place it (drag a square to resize, wheel to grow or shrink), or type numbers. Defaults crop a centred square. Expressions like iw/2 work.")
 def b_crop(o, c):
     return [job(["-i", c.src, "-vf", crop_filter(o)] + vcodec() + AAC, c.out("_crop", ".mp4"), c.dur)]
 
@@ -2442,7 +2442,7 @@ TOOL_DOCS = {
     "speed": "Slow motion or time-lapse for the whole clip. 0.5 is half speed, 2 is twice as fast. The sound is speeded or slowed to match, without changing its pitch.",
     "reverse": "Play the clip backwards, picture and sound. The whole clip is held in memory, so use it on short clips.",
     "resize": "Change the picture size. Pick a size from 144p up to 8K (the number is the short side, so it works for vertical video too) or choose Custom and type a width and height. 'Never enlarge' keeps smaller videos as they are.",
-    "crop": "Cut away the edges of the picture. The defaults crop a centred square; the boxes accept numbers or expressions such as iw/2 (half the width).",
+    "crop": "Cut away the edges of the picture. Drag the box on the picture to choose what to keep (drag a square to resize it, use the mouse wheel to make it bigger or smaller). The defaults crop a centred square; the boxes accept numbers or expressions such as iw/2 (half the width).",
     "rotate": "Turn the picture 90 degrees clockwise, 90 counter-clockwise or 180 degrees. Handy for phone clips that came out sideways.",
     "flip": "Mirror the picture horizontally, flip it vertically, or both.",
     "aspect": "Reshape a video for TikTok, Reels or Shorts (9:16), square (1:1), portrait (4:5) or landscape (16:9) without stretching it. The empty bars can be filled with a blurred copy of the video, a solid colour, or you can crop to fill the frame.",
@@ -4861,6 +4861,197 @@ def gui():
     #  with grab_frame/preview_frame. Shows Before/After pairs for most filters,
     #  start/end frames for Trim, and the cropped result for Crop. Images are
     #  subsampled with tk PhotoImage to fit.
+    # Interactive crop box for the Crop window: the full frame with a draggable box. Drag inside to move it, drag a
+    #  square to resize it, use the mouse wheel to grow / shrink it. It reads and writes the Width / Height / X / Y
+    #  boxes, so the sliders and typed values stay in step with it.
+    def crop_editor(hold, tkvars):
+        cv = tk.Canvas(hold, highlightthickness=0, bd=0, bg="#101010", cursor="fleur")
+        S = {"img": None, "W": 0, "H": 0, "s": 1.0, "ox": 0, "oy": 0, "drag": None}
+        lock = tk.BooleanVar(value=False)
+        MIN = 16
+
+        def read_rect():
+            W, H = S["W"], S["H"]
+            if not W or not H:
+                return None
+            e = {"iw": W, "ih": H, "in_w": W, "in_h": H}
+            try:
+                w = eval_expr(tkvars["w"].get(), e)
+                h = eval_expr(tkvars["h"].get(), e)
+                if w is None or h is None:
+                    return None
+                e["ow"], e["oh"] = w, h
+                x = eval_expr(tkvars["x"].get(), e)
+                y = eval_expr(tkvars["y"].get(), e)
+            except (KeyError, tk.TclError):
+                return None
+            if x is None or y is None:
+                return None
+            w, h = min(max(2.0, w), W), min(max(2.0, h), H)
+            return min(max(0.0, x), W - w), min(max(0.0, y), H - h), w, h
+
+        # Write a new box into the four text boxes (whole, even numbers inside the picture); sliders and preview follow.
+        def put(x, y, w, h):
+            W, H = S["W"], S["H"]
+            w, h = int(round(min(max(MIN, w), W) / 2.0) * 2), int(round(min(max(MIN, h), H) / 2.0) * 2)
+            x, y = int(round(min(max(0, x), W - w) / 2.0) * 2), int(round(min(max(0, y), H - h) / 2.0) * 2)
+            for k, v in (("w", w), ("h", h), ("x", x), ("y", y)):
+                if tkvars[k].get() != str(v):
+                    tkvars[k].set(str(v))
+            draw()
+
+        def handles(X1, Y1, X2, Y2):
+            mx, my = (X1 + X2) / 2, (Y1 + Y2) / 2
+            return [("nw", X1, Y1), ("ne", X2, Y1), ("se", X2, Y2), ("sw", X1, Y2), ("n", mx, Y1), ("e", X2, my), ("s", mx, Y2), ("w", X1, my)]
+
+        def screen_rect():
+            r = read_rect()
+            if r is None:
+                return None
+            x, y, w, h = r
+            s, ox, oy = S["s"], S["ox"], S["oy"]
+            return ox + x * s, oy + y * s, ox + (x + w) * s, oy + (y + h) * s
+
+        def draw(*_):
+            try:
+                cv.delete("all")
+                img = S["img"]
+                if img is None:
+                    cv.create_text(10, 10, anchor="nw", text="loading…", fill="#9aa7b4")
+                    return
+                ox, oy, iw_, ih_ = S["ox"], S["oy"], img.width(), img.height()
+                cv.create_image(ox, oy, image=img, anchor="nw")
+                sr = screen_rect()
+                if sr is None:
+                    return
+                X1, Y1, X2, Y2 = sr
+                for b in ((ox, oy, ox + iw_, Y1), (ox, Y2, ox + iw_, oy + ih_), (ox, Y1, X1, Y2), (X2, Y1, ox + iw_, Y2)):
+                    cv.create_rectangle(*b, fill="#000000", stipple="gray50", outline="")
+                for k in (1, 2):
+                    cv.create_line(X1 + (X2 - X1) * k / 3, Y1, X1 + (X2 - X1) * k / 3, Y2, fill="#ffffff", dash=(2, 4))
+                    cv.create_line(X1, Y1 + (Y2 - Y1) * k / 3, X2, Y1 + (Y2 - Y1) * k / 3, fill="#ffffff", dash=(2, 4))
+                cv.create_rectangle(X1, Y1, X2, Y2, outline=GOLD, width=2)
+                for _n, px, py in handles(X1, Y1, X2, Y2):
+                    cv.create_rectangle(px - 5, py - 5, px + 5, py + 5, fill=GOLD, outline="#1a1405")
+                r = read_rect()
+                cv.create_text(X1 + 8, Y1 + 6, anchor="nw", text=f"{int(r[2])} x {int(r[3])}", fill="#ffffff", font=f_small)
+            except tk.TclError:
+                pass
+
+        def layout(*_):
+            img = S["img"]
+            if img is not None:
+                S["ox"] = max(0, (cv.winfo_width() - img.width()) // 2)
+                S["oy"] = max(0, (cv.winfo_height() - img.height()) // 2)
+            draw()
+
+        # Called with the full-frame picture and the video's real size (pixels) whenever the preview refreshes.
+        def set_image(path, wh):
+            try:
+                img = tk.PhotoImage(file=path) if path else None
+            except tk.TclError:
+                img = None
+            S["img"] = img
+            if wh and wh[0] and wh[1] and img is not None:
+                S["W"], S["H"] = wh
+                S["s"] = img.width() / float(wh[0])
+            layout()
+
+        def hit(ex, ey):
+            sr = screen_rect()
+            if sr is None:
+                return None
+            X1, Y1, X2, Y2 = sr
+            for nm, px, py in handles(X1, Y1, X2, Y2):
+                if abs(ex - px) <= 9 and abs(ey - py) <= 9:
+                    return nm
+            return "move" if (X1 <= ex <= X2 and Y1 <= ey <= Y2) else "out"
+
+        CUR = {"nw": "size_nw_se", "se": "size_nw_se", "ne": "size_ne_sw", "sw": "size_ne_sw", "n": "sb_v_double_arrow",
+               "s": "sb_v_double_arrow", "e": "sb_h_double_arrow", "w": "sb_h_double_arrow", "move": "fleur", "out": "crosshair"}
+
+        def on_move(e):
+            if S["drag"] is None:
+                try:
+                    cv.configure(cursor=CUR.get(hit(e.x, e.y) or "move", "fleur"))
+                except tk.TclError:
+                    pass
+
+        def on_press(e):
+            r = read_rect()
+            if r is None or S["img"] is None:
+                return
+            mode = hit(e.x, e.y)
+            if mode == "out":  # click outside the box: centre the box on that spot, then keep dragging it
+                x, y, w, h = r
+                put((e.x - S["ox"]) / S["s"] - w / 2, (e.y - S["oy"]) / S["s"] - h / 2, w, h)
+                r = read_rect()
+                mode = "move"
+            S["drag"] = {"mode": mode, "x0": e.x, "y0": e.y, "r0": r}
+
+        def on_drag(e):
+            d = S["drag"]
+            if not d:
+                return
+            s, W, H = S["s"], S["W"], S["H"]
+            dx, dy = (e.x - d["x0"]) / s, (e.y - d["y0"]) / s
+            x0, y0, w0, h0 = d["r0"]
+            if d["mode"] == "move":
+                put(min(max(0, x0 + dx), W - w0), min(max(0, y0 + dy), H - h0), w0, h0)
+                return
+            m = d["mode"]
+            L, T, R, B = x0, y0, x0 + w0, y0 + h0
+            if "w" in m:
+                L = min(max(0, L + dx), R - MIN)
+            if "e" in m:
+                R = max(min(W, R + dx), L + MIN)
+            if "n" in m:
+                T = min(max(0, T + dy), B - MIN)
+            if "s" in m:
+                B = max(min(H, B + dy), T + MIN)
+            if lock.get() and w0 and h0:
+                ratio = w0 / h0
+                if len(m) == 2:  # corner: width decides, height follows, the opposite corner stays put
+                    nh = (R - L) / ratio
+                    if "n" in m:
+                        T = B - nh
+                    else:
+                        B = T + nh
+                elif m in ("n", "s"):  # top/bottom edge: width follows, centred
+                    nw = (B - T) * ratio
+                    cx = x0 + w0 / 2
+                    L, R = cx - nw / 2, cx + nw / 2
+                else:  # left/right edge: height follows, centred
+                    nh = (R - L) / ratio
+                    cy = y0 + h0 / 2
+                    T, B = cy - nh / 2, cy + nh / 2
+                if L < 0 or T < 0 or R > W or B > H:
+                    return  # would leave the picture: ignore this step
+            put(L, T, R - L, B - T)
+
+        def on_release(_e):
+            S["drag"] = None
+
+        def on_wheel(e):
+            r = read_rect()
+            if r is None:
+                return
+            x, y, w, h = r
+            f = 0.94 if e.delta > 0 else 1 / 0.94
+            k = min(f, S["W"] / w, S["H"] / h)  # never bigger than the picture
+            nw, nh = w * k, h * k
+            put(x + (w - nw) / 2, y + (h - nh) / 2, nw, nh)
+
+        cv.bind("<Motion>", on_move)
+        cv.bind("<ButtonPress-1>", on_press)
+        cv.bind("<B1-Motion>", on_drag)
+        cv.bind("<ButtonRelease-1>", on_release)
+        cv.bind("<MouseWheel>", on_wheel)
+        cv.bind("<Configure>", layout)
+        for v in tkvars.values():
+            v.trace_add("write", lambda *a: draw())
+        return {"canvas": cv, "set_image": set_image, "lock": lock, "draw": draw}
+
     def attach_preview(top_, frm, spec, getters, tkvars, nrows):
         def cur_src(raw=None):
             src_ = preview_source()
@@ -4880,13 +5071,15 @@ def gui():
             return
         strip_cfg = STRIP_OPS.get(spec["id"])
         is_trim = spec["id"] == "trim"
-        dim = {"w": 560, "h": 315} if is_trim else {"w": 430, "h": 245}  # picture slot size; Trim gets a bigger one and follows the window size
+        dim = {"w": 560, "h": 315} if (is_trim or spec["id"] == "crop") else {"w": 430, "h": 245}  # picture slot size; Trim gets a bigger one and follows the window size
         holds = []
         base_w, base_h = dim["w"], dim["h"]
         names = ["Preview (the handle you moved last)"] if is_trim else (["Result of the crop"] if spec["id"] == "crop" else (["First clip", "Second clip (joined after it)"] if spec["id"] in ("join", "crossfade") else ["Before", "After (this is what the result will look like)"]))
         labels = []
+        name_lbl = None
         for nm in names:
-            ttk.Label(box, text=nm, style="Muted.TLabel").pack(anchor="w")
+            name_lbl = ttk.Label(box, text=nm, style="Muted.TLabel")
+            name_lbl.pack(anchor="w")
             hold = ttk.Frame(box, width=dim["w"], height=dim["h"])
             holds.append(hold)  # fixed slot so the window does not jump when a picture appears
             hold.pack(pady=(0, 6))
@@ -4894,6 +5087,25 @@ def gui():
             lab = ttk.Label(hold, text="loading…", anchor="center")
             lab.pack(expand=True)
             labels.append(lab)
+        # Crop: a draggable box over the full picture (drag to move, squares to resize, wheel to grow/shrink).
+        crop_ed = None
+        if spec["id"] == "crop" and all(k in tkvars for k in ("w", "h", "x", "y")):
+            crop_ed = crop_editor(holds[0], tkvars)
+            view = tk.StringVar(value="move")
+            vrow = ttk.Frame(box)
+            vrow.pack(fill="x", pady=(0, 4))
+
+            def set_view(*_):
+                if view.get() == "move":
+                    crop_ed["canvas"].place(x=0, y=0, relwidth=1, relheight=1)
+                    name_lbl.configure(text="Drag the box to move it. Drag a square to resize. Mouse wheel = bigger / smaller.")
+                else:
+                    crop_ed["canvas"].place_forget()
+                    name_lbl.configure(text="Result of the crop")
+            ttk.Radiobutton(vrow, text="Position the crop", variable=view, value="move", command=set_view).pack(side="left")
+            ttk.Radiobutton(vrow, text="Result", variable=view, value="result", command=set_view).pack(side="left", padx=10)
+            ttk.Checkbutton(vrow, text="Keep the shape", variable=crop_ed["lock"]).pack(side="right")
+            set_view()
         # "Preview at": slide through the video to see the effect at any moment (Trim and the strip tools
         #  follow their handles instead).
         pos_var, pos_cb = None, {"f": None}
@@ -5024,6 +5236,15 @@ def gui():
                     ok = grab_frame(src, tc, f, crop_filter(o), box=(raw["__w"] - 10, raw["__h"] - 5))
                     paths.append(f if ok else None)
                     msg = "" if ok else "These crop values don't work yet - check the width, height and offsets."
+                    # the whole frame (for the draggable box); only re-made when the moment or the picture size changes
+                    key_ = (src, round(tc, 2), raw["__w"], raw["__h"])
+                    if st.get("full_key") != key_ or not os.path.exists(st.get("full_png", "")):
+                        ff_ = os.path.join(tmpd, f"full{n}.png")
+                        if grab_frame(src, tc, ff_, box=(raw["__w"] - 10, raw["__h"] - 5)):
+                            st["full_key"], st["full_png"] = key_, ff_
+                    pi_ = probe(src)
+                    st["srcwh"] = (pi_["w"], pi_["h"])
+                    paths.append(st.get("full_png"))
             except Exception as e:  # noqa: BLE001
                 msg = f"No preview: {e}"
             q.put(("call", lambda: show(n, paths, msg)))
@@ -5052,6 +5273,8 @@ def gui():
                 else:
                     lab.configure(image="", text="(no preview)")
             note.configure(text=msg)
+            if crop_ed is not None:
+                crop_ed["set_image"](paths[1] if len(paths) > 1 else None, st.get("srcwh"))
 
         def kick():
             st["after"] = None
