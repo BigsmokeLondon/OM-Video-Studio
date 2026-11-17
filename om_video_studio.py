@@ -4530,8 +4530,9 @@ def gui():
             L = (v1 - v0) / factor
             frac = (at - v0) / (v1 - v0)
             n0 = at - frac * L
-            if e_ - s_ <= L:  # the whole selection fits: keep it fully in view
-                n0 = max(min(n0, s_), e_ - L)
+            m_ = L * 0.06  # a little room each side so both handles stay visible
+            if e_ - s_ + 2 * m_ <= L:  # the whole selection fits: keep it fully in view
+                n0 = max(min(n0, s_ - m_), e_ + m_ - L)
             set_view(n0, n0 + L)
 
         def pan(frac):
@@ -4650,8 +4651,7 @@ def gui():
             cv.create_rectangle(ce, RULER, hi_, h_, fill="#000000", stipple="gray50", width=0)
             cv.create_rectangle(cs, RULER, ce, h_, outline=BRAND_GOLD, width=2)
             for x, side in ((xs, -1), (xe, 1)):
-                if x < lo_ - 1 or x > hi_ + 1:
-                    continue  # that handle is outside the zoomed view
+                x = min(max(x, lo_ + 8), hi_ - 8)  # a handle beyond the zoomed view is shown at the edge so it can still be grabbed
                 x0, x1 = (x - 8, x) if side < 0 else (x, x + 8)
                 cv.create_rectangle(x0, RULER - 2, x1, h_ + 2, fill=BRAND_GOLD, outline=BRAND_GOLD)
                 cv.create_line(x0 + 4, RULER + 10, x0 + 4, h_ - 8, fill="#5a4300")
