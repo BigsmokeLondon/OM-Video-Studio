@@ -4095,6 +4095,23 @@ def gui():
         ttk.Button(bf, text="Run", style=run_style, command=go).pack(side="left")
         top_.bind("<Return>", lambda e: go())
         top_.bind("<Escape>", lambda e: top_.destroy())
+        if spec["id"] in ("trim", "crop"):
+            def fill_screen():
+                try:
+                    if top_.state() == "zoomed":
+                        top_.state("normal")
+                        fs_btn.configure(text="Fill screen")
+                    else:
+                        top_.state("zoomed")
+                        fs_btn.configure(text="Normal size")
+                except tk.TclError:
+                    try:  # platforms without 'zoomed': fill the screen by hand
+                        top_.geometry(f"{top_.winfo_screenwidth() - 20}x{top_.winfo_screenheight() - 80}+0+0")
+                    except tk.TclError:
+                        pass
+            fs_btn = ttk.Button(bf, text="Fill screen", command=fill_screen)
+            fs_btn.pack(side="left", padx=(8, 0))
+            top_.bind("<F11>", lambda e: fill_screen())
         if spec["id"] in ("trim", "crop") or spec["id"] in STRIP_OPS or spec["kind"] in ("video", "image"):
             try:
                 attach_preview(top_, frm, spec, getters, tkvars, r + 1)
