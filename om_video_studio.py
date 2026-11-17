@@ -4563,6 +4563,14 @@ def gui():
                 x0, x1 = (x - 8, x) if side < 0 else (x, x + 8)
                 cv.create_rectangle(x0, RULER - 2, x1, h_ + 2, fill=BRAND_GOLD, outline=BRAND_GOLD)
                 cv.create_line(x0 + 4, RULER + 10, x0 + 4, h_ - 8, fill="#5a4300")
+            # length of the selection (the delta between the two handles), centred at the top of the box
+            txt = "Length " + fmt_ms(max(0.0, e_ - s_))
+            tw = f_base.measure(txt) + 14
+            if xe - xs > tw + 24:
+                cx = (xs + xe) / 2
+                lh = f_base.metrics("linespace") + 6
+                cv.create_rectangle(cx - tw / 2, RULER + 6, cx + tw / 2, RULER + 6 + lh, fill="#000000", outline=BRAND_GOLD)
+                cv.create_text(cx, RULER + 6 + lh / 2, text=txt, fill=BRAND_GOLD, font=f_base)
 
         def track(*_):
             """Remember which handle changed last (the big preview follows it), then redraw."""
