@@ -2,6 +2,10 @@
 
 All notable changes to O.M. Video Studio. Newest first. Downloads for every version are on the [releases page](https://github.com/BigsmokeLondon/OM-Video-Studio/releases).
 
+## 1.17.0 - 2026-11-17
+
+**Drag the crop box on the live picture.** In Crop, grab the box with the mouse to move it, drag a square to resize it, or use the mouse wheel to make it bigger or smaller; the number boxes and sliders stay in step, and "Keep the shape" locks the proportions. **Fill screen** button (also F11) and drag-to-resize on every tool window with a live preview. **Tool windows no longer lock the main window**, so you can open several tools side by side. **Fix:** Run did nothing when the saved output folder was on a drive that is no longer connected; that folder is now ignored and a clear message is shown if a folder cannot be used.
+
 ## 1.16.0 - 2026-11-13
 
 **A new look.** Rounded tool cards with an icon and a one-line description, a search box for all 70 tools, a slimmer header, and a sidebar that shows how many tools each group has. The input area now shows a thumbnail of your file with its length, size and codec, and where the result will be saved. A new **Settings** window (the gear in the header) holds the theme, language, text size, the graphics card switch and Check graphics card button, the sounds, and the option to show ffmpeg commands. The log is tucked away behind **Show details** and opens by itself if a job fails. Buttons are now **Choose files** and **Whole folder**.
