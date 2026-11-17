@@ -2,6 +2,10 @@
 
 All notable changes to O.M. Video Studio. Newest first. Downloads for every version are on the [releases page](https://github.com/BigsmokeLondon/OM-Video-Studio/releases).
 
+## 1.18.0 - 2026-11-17
+
+**Contact form in the About window.** Found a bug or want a new tool? Open About, fill in your name, email (so I can reply) and message, answer the small spam-check sum and press **Send message**; **Copy message** copies it instead if you prefer to email. Messages are delivered by Formspree and arrive labelled with the app name and version.
+
 ## 1.17.1 - 2026-11-17
 
 **Trim audio, much bigger and easier.** Press Fill screen and the waveform moves under the tool and stretches across the whole window. Zoom into the waveform with the mouse wheel (or + / -), move along it with Shift + wheel or the arrow keys, and press Whole file (or 0) to see everything again; the selection always stays in view. The selection box now shows its **Length**. While you play the selection, a green marker with the time moves across the waveform; **Pause** leaves the marker where the sound stopped so you can drag a yellow edge onto it (it snaps) or press **Start here** / **End here**, then **Resume** to carry on. The length label and play marker also work in Trim and the other film-strip tools.

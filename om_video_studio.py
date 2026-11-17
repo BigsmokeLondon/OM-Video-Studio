@@ -65,11 +65,11 @@ from pathlib import Path
 #  *_EXT sets: decide which files the "kind" checker accepts for each operation
 #  and which extensions the file pickers show.
 APP = "O.M. Video Studio"
-VERSION = "1.17.1"
+VERSION = "1.18.0"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 # Contact form in the About window: messages are delivered by Formspree (same service as the Punjab & Kashmir Explorer page).
 # Put the form's address here, e.g. "https://formspree.io/f/xxxxxxxx". While it is empty, Send explains that and Copy message still works.
-CONTACT_URL = ""
+CONTACT_URL = "https://formspree.io/f/xkjjddgb"
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
 SUB_EXT = {".srt", ".ass", ".vtt"}
@@ -2858,7 +2858,7 @@ def gui():
             sbtn.configure(state="disabled")
             cstat.configure(text="Sending...")
             payload = json.dumps({"name": cn.get().strip(), "email": em, "message": msg, "app": f"{APP} {VERSION}",
-                                  "_subject": f"{APP} {VERSION} message"}).encode("utf-8")
+                                  "_subject": f"{APP} {VERSION}: feedback"}).encode("utf-8")
 
             def work_send():
                 import urllib.request
