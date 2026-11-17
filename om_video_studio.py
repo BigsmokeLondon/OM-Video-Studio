@@ -4738,7 +4738,7 @@ def gui():
                 play["proc"] = None
                 play["t0"] = None
                 if alive():
-                    cv.delete("ph")
+                    draw_ph()  # keeps the green marker if paused, clears it otherwise
                 return
             pos = min(play["e"], play["s"] + max(0.0, time.monotonic() - play["t0"] - 0.25))
             play["pos"] = pos
