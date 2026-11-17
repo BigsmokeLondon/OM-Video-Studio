@@ -49,6 +49,7 @@ import math
 import os
 import queue
 import re
+import random
 import shutil
 import subprocess
 import sys
@@ -66,6 +67,9 @@ from pathlib import Path
 APP = "O.M. Video Studio"
 VERSION = "1.17.1"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
+# Contact form in the About window: messages are delivered by Formspree (same service as the Punjab & Kashmir Explorer page).
+# Put the form's address here, e.g. "https://formspree.io/f/xxxxxxxx". While it is empty, Send explains that and Copy message still works.
+CONTACT_URL = ""
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
 SUB_EXT = {".srt", ".ass", ".vtt"}
@@ -2781,7 +2785,7 @@ def gui():
         w = tk.Toplevel(root)
         w.title(tr("About"))
         w.transient(root)
-        w.geometry("820x720")
+        w.geometry("820x860")
         w.configure(bg=pal()["bg"])
         top_f = ttk.Frame(w, padding=(18, 14, 18, 6))
         top_f.pack(fill="x")
@@ -2805,6 +2809,83 @@ def gui():
         ttk.Button(btns, text="Open the illustrated guide", command=lambda: webbrowser.open(ABOUT_URL)).pack(side="left")
         ttk.Button(btns, text="GitHub page", command=lambda: webbrowser.open(f"https://github.com/{GITHUB_REPO}")).pack(side="left", padx=6)
         ttk.Button(btns, text="Close", command=w.destroy).pack(side="left")
+        # ---- Contact form (bottom of the About window)
+        cf = ttk.LabelFrame(w, text="Help improve O.M. Video Studio", padding=(12, 8))
+        cf.pack(side="bottom", fill="x", padx=18, pady=(0, 14))
+        ttk.Label(cf, text="Found a bug, want a new tool, or have an idea? Tell me. Messages are delivered by Formspree. "
+                           "Please don't put private details in the message.", style="Muted.TLabel", wraplength=740, justify="left").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 6))
+        cn, ce_, cm = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        ca = random.randint(2, 9)
+        cb = random.randint(2, 9)
+        cs = tk.StringVar()
+        ttk.Label(cf, text="Your name").grid(row=1, column=0, sticky="w")
+        ttk.Entry(cf, textvariable=cn, width=26).grid(row=1, column=1, sticky="w", padx=(6, 14))
+        ttk.Label(cf, text="Your email (so I can reply)").grid(row=1, column=2, sticky="w")
+        ttk.Entry(cf, textvariable=ce_, width=30).grid(row=1, column=3, sticky="we", padx=(6, 0))
+        ttk.Label(cf, text="Message").grid(row=2, column=0, sticky="nw", pady=(6, 0))
+        mt = tk.Text(cf, height=4, wrap="word", bg=pal()["log_bg"], fg=pal()["log_fg"], relief="flat", padx=8, pady=6, font=f_base, insertbackground=pal()["fg"])
+        mt.grid(row=2, column=1, columnspan=3, sticky="we", padx=(6, 0), pady=(6, 0))
+        cf.columnconfigure(3, weight=1)
+        sp = ttk.Frame(cf)
+        sp.grid(row=3, column=0, columnspan=4, sticky="we", pady=(8, 0))
+        ttk.Label(sp, text=f"Spam check: what is {ca} + {cb}?").pack(side="left")
+        ttk.Entry(sp, textvariable=cs, width=5).pack(side="left", padx=(6, 14))
+        cstat = ttk.Label(sp, text="", style="Muted.TLabel")
+
+        def compose():
+            return (f"From: {cn.get().strip()} <{ce_.get().strip()}>\nApp: {APP} {VERSION}\n\n" + mt.get("1.0", "end").strip())
+
+        def copy_msg():
+            root.clipboard_clear()
+            root.clipboard_append(compose())
+            cstat.configure(text="Copied - paste it into an email if you prefer.")
+
+        def send_msg():
+            msg = mt.get("1.0", "end").strip()
+            if not msg:
+                cstat.configure(text="Please write a message first.")
+                return
+            em = ce_.get().strip()
+            if em and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", em):
+                cstat.configure(text="That email address doesn't look right.")
+                return
+            if cs.get().strip() != str(ca + cb):
+                cstat.configure(text="Spam check: please answer the sum.")
+                return
+            if not CONTACT_URL:
+                cstat.configure(text="The contact form isn't connected yet. Use Copy message for now.")
+                return
+            sbtn.configure(state="disabled")
+            cstat.configure(text="Sending...")
+            payload = json.dumps({"name": cn.get().strip(), "email": em, "message": msg, "app": f"{APP} {VERSION}",
+                                  "_subject": f"{APP} {VERSION} message"}).encode("utf-8")
+
+            def work_send():
+                import urllib.request
+                try:
+                    req = urllib.request.Request(CONTACT_URL, data=payload, method="POST",
+                                                 headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": f"{APP}/{VERSION}"})
+                    with urlopen_robust(req, timeout=30) as r:
+                        ok_ = 200 <= r.status < 300
+                    res = "Sent - thank you!" if ok_ else "Couldn't send. Try Copy message."
+                except Exception as e:  # noqa: BLE001
+                    write_log(f"contact form failed: {e!r}")
+                    ok_, res = False, "Couldn't send (no internet?). Try Copy message."
+
+                def done():
+                    try:
+                        cstat.configure(text=res)
+                        sbtn.configure(state="normal")
+                        if ok_:
+                            mt.delete("1.0", "end")
+                    except tk.TclError:
+                        pass
+                q.put(("call", done))
+            threading.Thread(target=work_send, daemon=True).start()
+        sbtn = ttk.Button(sp, text="Send message", command=send_msg)
+        sbtn.pack(side="left")
+        ttk.Button(sp, text="Copy message", command=copy_msg).pack(side="left", padx=6)
+        cstat.pack(side="left", padx=8)
         body_f = ttk.Frame(w, padding=(18, 6, 18, 14))
         body_f.pack(fill="both", expand=True)
         txt = tk.Text(body_f, wrap="word", bg=pal()["log_bg"], fg=pal()["log_fg"], relief="flat", padx=14, pady=10,
