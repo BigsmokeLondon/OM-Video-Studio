@@ -4105,6 +4105,13 @@ def gui():
             x = root.winfo_rootx() + max(0, (root.winfo_width() - top_.winfo_reqwidth()) // 2)
             y = root.winfo_rooty() + max(0, (root.winfo_height() - top_.winfo_reqheight()) // 3)
             top_.geometry(f"+{x}+{y}")
+            if spec["id"] in ("trim", "crop"):
+                # Windows hides the maximise button on a "transient" window, so release it: the window can then be dragged bigger or maximised.
+                top_.transient("")
+                top_.minsize(top_.winfo_reqwidth(), top_.winfo_reqheight())
+                top_.resizable(True, True)
+                top_.lift()
+                top_.focus_force()
         except Exception:  # noqa: BLE001
             pass
 
