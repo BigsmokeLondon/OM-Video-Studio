@@ -2753,7 +2753,17 @@ def gui():
     if gpu_key:
         STATE["gpu_enc"] = gpu_key
     path_var = tk.StringVar()
-    out_var = tk.StringVar(value=settings.get("outdir", ""))
+    # A saved output folder on a drive that is not connected now (for example a network drive) is dropped, so jobs still run.
+    saved_out = settings.get("outdir", "")
+    try:
+        drv = os.path.splitdrive(saved_out)[0]
+        if saved_out and ((drv and not os.path.isdir(drv + os.sep)) or (not drv and not os.path.isdir(saved_out) and not os.path.isdir(os.path.dirname(saved_out) or "."))):
+            write_log(f"saved output folder not available, using the source folder instead: {saved_out}")
+            saved_out = ""
+            settings["outdir"] = ""
+    except OSError:
+        saved_out = ""
+    out_var = tk.StringVar(value=saved_out)
     gpu_var = tk.BooleanVar(value=bool(gpu_available))  # GPU on by default when a real hardware test encode works; CPU otherwise
     STATE["gpu"] = bool(gpu_available)
     cmd_var = tk.BooleanVar(value=False)
@@ -4111,7 +4121,12 @@ def gui():
             return None
         outdir = out_var.get().strip() or None
         if outdir:
-            os.makedirs(outdir, exist_ok=True)
+            try:
+                os.makedirs(outdir, exist_ok=True)
+            except OSError as e:
+                write_log(f"cannot use output folder {outdir}: {e!r}")
+                messagebox.showwarning(APP, f"The output folder cannot be used:\n{outdir}\n\n{e}\n\nChoose another folder with Change, or press Same as source in the main window.", parent=parent)
+                return None
         return files, opts2, outdir
 
     # Disable buttons, reset progress and remember whether this run is a batch (decides which ping plays).
