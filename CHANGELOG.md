@@ -2,6 +2,10 @@
 
 All notable changes to O.M. Video Studio. Newest first. Downloads for every version are on the [releases page](https://github.com/BigsmokeLondon/OM-Video-Studio/releases).
 
+## 1.17.1 - 2026-11-17
+
+**Trim audio, much bigger and easier.** Press Fill screen and the waveform moves under the tool and stretches across the whole window. Zoom into the waveform with the mouse wheel (or + / -), move along it with Shift + wheel or the arrow keys, and press Whole file (or 0) to see everything again; the selection always stays in view. The selection box now shows its **Length**. While you play the selection, a green marker with the time moves across the waveform; **Pause** leaves the marker where the sound stopped so you can drag a yellow edge onto it (it snaps) or press **Start here** / **End here**, then **Resume** to carry on. The length label and play marker also work in Trim and the other film-strip tools.
+
 ## 1.17.0 - 2026-11-17
 
 **Drag the crop box on the live picture.** In Crop, grab the box with the mouse to move it, drag a square to resize it, or use the mouse wheel to make it bigger or smaller; the number boxes and sliders stay in step, and "Keep the shape" locks the proportions. **Fill screen** button (also F11) and drag-to-resize on every tool window with a live preview. **Tool windows no longer lock the main window**, so you can open several tools side by side. **Fix:** Run did nothing when the saved output folder was on a drive that is no longer connected; that folder is now ignored and a clear message is shown if a folder cannot be used.
