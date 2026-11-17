@@ -4095,7 +4095,8 @@ def gui():
         ttk.Button(bf, text="Run", style=run_style, command=go).pack(side="left")
         top_.bind("<Return>", lambda e: go())
         top_.bind("<Escape>", lambda e: top_.destroy())
-        if spec["id"] in ("trim", "crop"):
+        has_preview = spec["id"] in ("trim", "crop") or spec["id"] in STRIP_OPS or spec["kind"] in ("video", "image")
+        if has_preview:
             def fill_screen():
                 try:
                     if top_.state() == "zoomed":
@@ -4122,7 +4123,7 @@ def gui():
             x = root.winfo_rootx() + max(0, (root.winfo_width() - top_.winfo_reqwidth()) // 2)
             y = root.winfo_rooty() + max(0, (root.winfo_height() - top_.winfo_reqheight()) // 3)
             top_.geometry(f"+{x}+{y}")
-            if spec["id"] in ("trim", "crop"):
+            if has_preview:
                 # Windows hides the maximise button on a "transient" window, so release it: the window can then be dragged bigger or maximised.
                 top_.transient("")
                 top_.minsize(top_.winfo_reqwidth(), top_.winfo_reqheight())
