@@ -3884,10 +3884,7 @@ def gui():
             top_.configure(bg=pal()["bg"])
         except tk.TclError:
             pass
-        try:
-            top_.grab_set()  # modal; on some desktops the window is not viewable yet, so retry shortly
-        except tk.TclError:
-            top_.after(150, lambda: top_.winfo_exists() and top_.grab_set())
+        # Not modal: the main window stays clickable so other tools can be opened side by side.
         frm = ttk.Frame(top_, padding=18)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text=spec["label"], style="Head.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
