@@ -1861,13 +1861,13 @@ STRIP_OPS = {
 }
 
 
-def make_wave(path, dur, cw, th=64):
+def make_wave(path, dur, cw, th=64, t0=0.0, tlen=None):
     """Waveform picture for audio files (the film strip of an audio file). Returns (png_path, width, height)."""
     if dur <= 0:
         return None, 0, 0
     try:
         st_ = os.stat(path)
-        key = f"{path}|{st_.st_mtime_ns}|{st_.st_size}|wave|{cw}|{th}"
+        key = f"{path}|{st_.st_mtime_ns}|{st_.st_size}|wave|{cw}|{th}|{t0:.3f}|{tlen}"
         d = os.path.join(tempfile.gettempdir(), "om_video_studio_strips")
         os.makedirs(d, exist_ok=True)
     except OSError:
@@ -1877,7 +1877,8 @@ def make_wave(path, dur, cw, th=64):
         sw, sh = png_size(out)
         return (out, sw, sh) if sw else (None, 0, 0)
     part = out[:-4] + ".part.png"
-    cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-i", path, "-vn", "-filter_complex",
+    seek = ["-ss", f"{t0:.3f}", "-t", f"{tlen:.3f}"] if tlen else []  # zoomed view: only draw that part of the file
+    cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error"] + seek + ["-i", path, "-vn", "-filter_complex",
            f"aformat=channel_layouts=mono,showwavespic=s={cw}x{th}:colors=0x4fa3e0", "-frames:v", "1", part]
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=240, creationflags=NO_WINDOW)
@@ -4499,9 +4500,81 @@ def gui():
         brow.pack(fill="x", pady=(0, 6))
         ttk.Button(brow, text="▶  Play selection (with sound)", command=play_sel).pack(side="left")
         ttk.Button(brow, text="■  Stop", command=stop_play).pack(side="left", padx=(6, 0))
+        zt = {"after": None}
+
+        def zoom_render():
+            zt["after"] = None
+            if alive() and st.get("resize_strip"):
+                st["resize_strip"](S.get("wpw", pw), S.get("wth", 64))
+
+        def set_view(v0, v1):
+            d = S["dur"]
+            L = min(max(v1 - v0, 0.25), d)
+            v0 = min(max(v0, 0.0), max(0.0, d - L))
+            S["v0"], S["v1"] = v0, v0 + L
+            redraw()
+            if zt["after"]:
+                try:
+                    top_.after_cancel(zt["after"])
+                except tk.TclError:
+                    pass
+            zt["after"] = top_.after(220, zoom_render)  # the waveform picture is re-made for the new part of the file
+
+        def zoom(factor, at=None):
+            if S["dur"] <= 0 or not cfg.get("audio"):
+                return
+            v0, v1 = view()
+            at = (v0 + v1) / 2 if at is None else at
+            L = (v1 - v0) / factor
+            frac = (at - v0) / (v1 - v0)
+            set_view(at - frac * L, at - frac * L + L)
+
+        def pan(frac):
+            if S["dur"] <= 0 or not cfg.get("audio"):
+                return
+            v0, v1 = view()
+            set_view(v0 + (v1 - v0) * frac, v1 + (v1 - v0) * frac)
+
+        def zoom_reset():
+            S["v0"], S["v1"] = 0.0, None
+            set_view(0.0, S["dur"])
+
+        def mouse_t():
+            v0, v1 = view()
+            mx = S.get("mx")
+            return t_of(mx) if mx is not None else (v0 + v1) / 2
+
+        if cfg.get("audio"):
+            ttk.Button(brow, text="+", width=3, command=lambda: zoom(1.6)).pack(side="left", padx=(14, 0))
+            ttk.Button(brow, text="-", width=3, command=lambda: zoom(1 / 1.6)).pack(side="left", padx=(4, 0))
+            ttk.Button(brow, text="Whole file", command=zoom_reset).pack(side="left", padx=(4, 0))
+
+            def wheel(e):
+                d_ = getattr(e, "delta", 0) or (120 if getattr(e, "num", 0) == 4 else -120)
+                if e.state & 0x1:  # Shift + wheel = move along the file
+                    pan(-0.2 if d_ > 0 else 0.2)
+                else:
+                    zoom(1.35 if d_ > 0 else 1 / 1.35, t_of(e.x))
+                return "break"
+            cv.bind("<MouseWheel>", wheel)
+            cv.bind("<Button-4>", wheel)
+            cv.bind("<Button-5>", wheel)
+            cv.configure(takefocus=1)
+            cv.bind("<Enter>", lambda e: cv.focus_set(), add="+")
+            for k_ in ("<plus>", "<equal>", "<KP_Add>"):
+                cv.bind(k_, lambda e: zoom(1.35, mouse_t()))
+            for k_ in ("<minus>", "<KP_Subtract>"):
+                cv.bind(k_, lambda e: zoom(1 / 1.35, mouse_t()))
+            cv.bind("<Left>", lambda e: pan(-0.15))
+            cv.bind("<Right>", lambda e: pan(0.15))
+            cv.bind("<Key-0>", lambda e: zoom_reset())
+            cv.bind("<Home>", lambda e: zoom_reset())
+            ttk.Label(box, text="Zoom: mouse wheel (or + / -) over the waveform. Move: Shift + wheel or the arrow keys. 0 = whole file.", style="Muted.TLabel", wraplength=420).pack(anchor="w", pady=(0, 4))
         top_.bind("<Destroy>", lambda e: stop_play() if e.widget is top_ else None, add="+")
 
-        def clock(t):
+        def clock(t, step=1):
+            if step < 1:  # zoomed in: show fractions of a second
+                return f"{int(t // 60)}:{t - int(t // 60) * 60:05.2f}"
             t = int(round(t))
             return f"{t // 3600}:{t // 60 % 60:02d}:{t % 60:02d}" if t >= 3600 else f"{t // 60}:{t % 60:02d}"
 
@@ -4523,11 +4596,20 @@ def gui():
             e_ = min(max(e_, 0.0), d)
             return s_, max(e_, s_)
 
+        def view():
+            """The part of the file on show (seconds): all of it unless the audio waveform is zoomed in."""
+            d = S["dur"]
+            v0 = S.get("v0", 0.0)
+            v1 = S.get("v1") or d
+            return (v0, v1) if (d > 0 and v1 - v0 > 0.05) else (0.0, d)
+
         def x_of(t):
-            return PAD + (t / S["dur"] * S["sw"] if S["dur"] > 0 else 0)
+            v0, v1 = view()
+            return PAD + ((t - v0) / (v1 - v0) * S["sw"] if S["dur"] > 0 else 0)
 
         def t_of(x):
-            return min(max((x - PAD) / S["sw"] * S["dur"], 0.0), S["dur"]) if S["dur"] > 0 else 0.0
+            v0, v1 = view()
+            return min(max(v0 + (x - PAD) / S["sw"] * (v1 - v0), v0), v1) if S["dur"] > 0 else 0.0
 
         def alive():
             try:
@@ -4547,27 +4629,32 @@ def gui():
                 cv.create_text(int(cv.cget("width")) // 2, h_ // 2 + 3, text=S["msg"], fill=pl["muted"])
                 return
             cv.create_image(PAD, RULER, image=S["img"], anchor="nw")
-            step = next((s_ for s_ in (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600) if d / s_ <= max_labels), 7200)
-            t = 0
-            while t <= d + 1e-6:
+            v0_, v1_ = view()
+            step = next((s_ for s_ in (0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600) if (v1_ - v0_) / s_ <= max_labels), 7200)
+            t = math.ceil(v0_ / step - 1e-9) * step
+            while t <= v1_ + 1e-6:
                 x = x_of(t)
                 cv.create_line(x, RULER - 5, x, RULER, fill=pl["muted"])
-                cv.create_text(x + 3, RULER - 3, text=clock(t), anchor="sw", fill=pl["fg"] if "fg" in pl else pl["muted"], font=f_base)
+                cv.create_text(x + 3, RULER - 3, text=clock(t, step), anchor="sw", fill=pl["fg"] if "fg" in pl else pl["muted"], font=f_base)
                 t += step
             s_, e_ = times()
             xs, xe = x_of(s_), x_of(e_)
-            cv.create_rectangle(PAD, RULER, xs, h_, fill="#000000", stipple="gray50", width=0)
-            cv.create_rectangle(xe, RULER, PAD + S["sw"], h_, fill="#000000", stipple="gray50", width=0)
-            cv.create_rectangle(xs, RULER, xe, h_, outline=BRAND_GOLD, width=2)
+            lo_, hi_ = PAD, PAD + S["sw"]
+            cs, ce = min(max(xs, lo_), hi_), min(max(xe, lo_), hi_)
+            cv.create_rectangle(lo_, RULER, cs, h_, fill="#000000", stipple="gray50", width=0)
+            cv.create_rectangle(ce, RULER, hi_, h_, fill="#000000", stipple="gray50", width=0)
+            cv.create_rectangle(cs, RULER, ce, h_, outline=BRAND_GOLD, width=2)
             for x, side in ((xs, -1), (xe, 1)):
+                if x < lo_ - 1 or x > hi_ + 1:
+                    continue  # that handle is outside the zoomed view
                 x0, x1 = (x - 8, x) if side < 0 else (x, x + 8)
                 cv.create_rectangle(x0, RULER - 2, x1, h_ + 2, fill=BRAND_GOLD, outline=BRAND_GOLD)
                 cv.create_line(x0 + 4, RULER + 10, x0 + 4, h_ - 8, fill="#5a4300")
             # length of the selection (the delta between the two handles), centred at the top of the box
             txt = "Length " + fmt_ms(max(0.0, e_ - s_))
             tw = f_base.measure(txt) + 14
-            if xe - xs > tw + 24:
-                cx = (xs + xe) / 2
+            if ce - cs > tw + 24:
+                cx = (cs + ce) / 2
                 lh = f_base.metrics("linespace") + 6
                 cv.create_rectangle(cx - tw / 2, RULER + 6, cx + tw / 2, RULER + 6 + lh, fill="#000000", outline=BRAND_GOLD)
                 cv.create_text(cx, RULER + 6 + lh / 2, text=txt, fill=BRAND_GOLD, font=f_base)
@@ -4589,6 +4676,7 @@ def gui():
             redraw()
 
         def hover(x):
+            S["mx"] = x
             cv.delete("hov")
             if S["dur"] <= 0 or S["img"] is None:
                 return
@@ -4683,6 +4771,7 @@ def gui():
 
         # Window stretched: re-tile the strip for the new width (cached per width).
         def resize_strip(new_pw, th=None):
+            S["wpw"], S["wth"] = new_pw, (th or 64)
             S["tok"] = S.get("tok", 0) + 1
             tok = S["tok"]
 
@@ -4694,7 +4783,9 @@ def gui():
                         inf = probe(src)
                         dur = float(inf["dur"] or 0)
                         if cfg.get("audio"):
-                            png, sw, sh = make_wave(src, dur, new_pw - 2 * PAD, th or 64)
+                            v0_, v1_ = view()
+                            zoomed = v1_ - v0_ < dur - 0.05
+                            png, sw, sh = make_wave(src, dur, new_pw - 2 * PAD, th or 64, v0_, (v1_ - v0_) if zoomed else None)
                         else:
                             png, sw, sh = make_strip(src, dur, int(inf["w"] or 0), int(inf["h"] or 0), cw=new_pw - 2 * PAD)
                 except Exception as e:  # noqa: BLE001
