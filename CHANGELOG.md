@@ -2,6 +2,10 @@
 
 All notable changes to O.M. Video Studio. Newest first. Downloads for every version are on the [releases page](https://github.com/BigsmokeLondon/OM-Video-Studio/releases).
 
+## 1.18.1 - 2026-11-18
+
+**Contact form has its own inbox.** Messages from the About window now go to a Formspree form that belongs to O.M. Video Studio.
+
 ## 1.18.0 - 2026-11-17
 
 **Contact form in the About window.** Found a bug or want a new tool? Open About, fill in your name, email (so I can reply) and message, answer the small spam-check sum and press **Send message**; **Copy message** copies it instead if you prefer to email. Messages are delivered by Formspree and arrive labelled with the app name and version.
