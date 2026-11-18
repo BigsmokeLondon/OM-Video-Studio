@@ -32,7 +32,7 @@ Cut, join, reshape and re-time video.
 
 ![Trim / cut by time](images/tools/trim.png)
 
-Cut one section out of a video. Type a start and end time (hh:mm:ss or plain seconds); leave End blank to go to the end. 'Re-encode' gives a frame-exact cut, 'Copy' is instant but cuts on the nearest keyframe. A film strip with draggable handles, a live preview and a Play selection button help you find the exact moment.
+Cut one section out of a video. Type a start and end time (hh:mm:ss or plain seconds); leave End blank to go to the end. 'Re-encode' gives a frame-exact cut, 'Copy' is instant but cuts on the nearest keyframe. A film strip with draggable handles, a live preview and a Play selection button help you find the exact moment. Every preview tool has a Fill screen button (or F11) to make its window as big as your screen, and the window can also be resized by dragging its edges.
 
 **Options:** Start (hh:mm:ss or seconds); End (blank = to the end); Mode (choice, default 'Re-encode (exact cut)') [Re-encode (exact cut), Copy (instant, cuts on keyframes)] - choices: Re-encode (exact cut), Copy (instant, cuts on keyframes)
 
@@ -78,7 +78,7 @@ Change the picture size. Pick a size from 144p up to 8K (the number is the short
 
 ![Crop](images/tools/crop.png)
 
-Cut away the edges of the picture. The defaults crop a centred square; the boxes accept numbers or expressions such as iw/2 (half the width).
+Cut away the edges of the picture. The defaults crop a centred square; the boxes accept numbers or expressions such as iw/2 (half the width). In the preview, drag the crop box to move it, drag its edges to resize it, and use Fill screen (or F11) for a bigger picture to work on.
 
 **Options:** Width (text, default 'min(iw,ih)'); Height (text, default 'min(iw,ih)'); X offset (text, default '(iw-ow)/2'); Y offset (text, default '(ih-oh)/2')
 
@@ -220,7 +220,7 @@ Cut out the quiet gaps from a recording. Set how quiet counts as silence (dB) an
 
 ![Trim audio](images/tools/atrim.png)
 
-Cut one section out of an audio file. Type a start and end time; leave End blank to go to the end. Has the same film strip and live preview as Trim, with a waveform.
+Cut one section out of an audio file. Type a start and end time; leave End blank to go to the end. Has the same film strip and live preview as Trim, with a waveform that fills the window under the tool. The selection shows its length, the mouse wheel (or + / -) zooms in on the audio and Shift + wheel pans along it. Play selection draws a moving green marker so you can see where you are; Pause holds it, and Start here / End here set the handles at the marker.
 
 **Options:** Start; End (blank = to the end)
 
