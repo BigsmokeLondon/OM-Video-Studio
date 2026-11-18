@@ -2,6 +2,10 @@
 
 All notable changes to O.M. Video Studio. Newest first. Downloads for every version are on the [releases page](https://github.com/BigsmokeLondon/OM-Video-Studio/releases).
 
+## 1.18.2 - 2026-11-18
+
+**Clearer tool descriptions.** The descriptions of Trim, Crop and Trim audio (About window and the illustrated guide) now mention Fill screen, the draggable crop box, audio zoom, the length label and the green play marker with Pause. Guide screenshots refreshed.
+
 ## 1.18.1 - 2026-11-18
 
 **Contact form has its own inbox.** Messages from the About window now go to a Formspree form that belongs to O.M. Video Studio.

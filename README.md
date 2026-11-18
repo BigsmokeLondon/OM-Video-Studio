@@ -11,6 +11,8 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
+**New in 1.18.2:** **Clearer tool descriptions.** The descriptions of Trim, Crop and Trim audio (About window and the illustrated guide) now mention Fill screen, the draggable crop box, audio zoom, the length label and the green play marker with Pause. Guide screenshots refreshed.
+
 **New in 1.18.0:** **Contact form in the About window.** Found a bug or want a new tool? Open About, fill in your name, email (so I can reply) and message, answer the small spam-check sum and press **Send message**; **Copy message** copies it instead if you prefer to email. Messages are delivered by Formspree and arrive labelled with the app name and version.
 
 **New in 1.17.1:** **Trim audio, much bigger and easier.** Press Fill screen and the waveform moves under the tool and stretches across the whole window. Zoom into the waveform with the mouse wheel (or + / -), move along it with Shift + wheel or the arrow keys, and press Whole file (or 0) to see everything again; the selection always stays in view. The selection box now shows its **Length**. While you play the selection, a green marker with the time moves across the waveform; **Pause** leaves the marker where the sound stopped so you can drag a yellow edge onto it (it snaps) or press **Start here** / **End here**, then **Resume** to carry on. The length label and play marker also work in Trim and the other film-strip tools.

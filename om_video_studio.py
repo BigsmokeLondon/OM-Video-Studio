@@ -65,7 +65,7 @@ from pathlib import Path
 #  *_EXT sets: decide which files the "kind" checker accepts for each operation
 #  and which extensions the file pickers show.
 APP = "O.M. Video Studio"
-VERSION = "1.18.1"
+VERSION = "1.18.2"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 # Contact form in the About window: messages are delivered by Formspree (its own form, separate from the Punjab & Kashmir Explorer).
 # Put the form's address here, e.g. "https://formspree.io/f/xxxxxxxx". While it is empty, Send explains that and Copy message still works.
@@ -2441,7 +2441,7 @@ def ff_version():
 # One plain-English description per tool (shown in the About window and in docs/ABOUT.md). Keys are the tool ids.
 TOOL_DOCS = {
     # ---- Video
-    "trim": "Cut one section out of a video. Type a start and end time (hh:mm:ss or plain seconds); leave End blank to go to the end. 'Re-encode' gives a frame-exact cut, 'Copy' is instant but cuts on the nearest keyframe. A film strip with draggable handles, a live preview and a Play selection button help you find the exact moment.",
+    "trim": "Cut one section out of a video. Type a start and end time (hh:mm:ss or plain seconds); leave End blank to go to the end. 'Re-encode' gives a frame-exact cut, 'Copy' is instant but cuts on the nearest keyframe. A film strip with draggable handles, a live preview and a Play selection button help you find the exact moment. Fill screen (or F11) makes the window as big as your screen.",
     "join": "Join several clips into one video, in the order listed. Leave the Input box empty and add all your clips (or a whole folder) in the dialog, or pick a first clip and append the rest. A clip timeline lets you reorder them; everything is scaled to the first clip's size.",
     "split": "Cut a long video into equal-length parts, for example 59 seconds each for Shorts and Reels. Choose 'Re-encode' for exact lengths or 'Copy' for a fast cut on keyframes.",
     "speed": "Slow motion or time-lapse for the whole clip. 0.5 is half speed, 2 is twice as fast. The sound is speeded or slowed to match, without changing its pitch.",
@@ -2466,7 +2466,7 @@ TOOL_DOCS = {
     "aconvert": "Convert an audio file to another format: mp3, wav, m4a, flac, ogg or opus.",
     "loudnorm": "Even out the loudness to a standard target: -14 LUFS for YouTube and Spotify, -16 for podcasts and Apple, or -23 for broadcast. Works on audio and video files.",
     "silence": "Cut out the quiet gaps from a recording. Set how quiet counts as silence (dB) and how long a gap must last before it is removed. The result is audio only.",
-    "atrim": "Cut one section out of an audio file. Type a start and end time; leave End blank to go to the end. Has the same film strip and live preview as Trim, with a waveform.",
+    "atrim": "Cut one section out of an audio file. Type a start and end time; leave End blank to go to the end. Has the same film strip as Trim, with a waveform that fills the window under the tool. The selection shows its length; the mouse wheel (or + / -) zooms in and Shift + wheel pans. Play selection shows a moving green marker; Pause holds it, and Start here / End here set the handles at the marker.",
     "fade": "Fade the sound in at the start and out at the end, with the length of each in seconds. Tick 'Fade the picture too' to fade a video's picture as well.",
     "volume": "Make the sound louder or quieter. Gain is in decibels: +6 is roughly twice as loud, -6 roughly half.",
     "tempo": "Speed up or slow down audio without changing its pitch, so voices do not turn into chipmunks. 1.25 is a quarter faster.",
