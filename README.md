@@ -3,13 +3,15 @@
 ![O.M. Video Studio demo](docs/images/demo.gif)
 
 Free point-and-click video, audio and image tools for Windows, powered by ffmpeg. Pick a file, press a button. No commands to learn.
-Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, thumbnails, one-click social-media export and more (71 operations).
+Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, thumbnails, one-click social-media export and more (72 operations).
 
 ## Screenshots
 
 | Pick a tool | One-click social export | Finished |
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
+
+**New in 1.20.0:** **Face Blur (photo).** Cover faces in a photo with a circle or square: blur, pixelate, black or an emoji. Add covers by hand for missed faces, or pick which faces to cover. 72 tools.
 
 **New in 1.19.0:** **Face Blur.** A new tool that finds faces and covers them with a circle or square that follows them: blur, pixelate, black or an emoji. Preview in the editor, add extra covers by hand for missed faces, or pick which faces to cover. Also: clearer Trim descriptions and a fix for "Normal size" after "Fill screen". 71 tools.
 

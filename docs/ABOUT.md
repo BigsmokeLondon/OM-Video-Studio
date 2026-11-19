@@ -332,6 +332,12 @@ Turn a section of a video into an animated GIF with an optimised colour palette.
 
 **Options:** Start; Length (seconds); Frames per second; Width
 
+### Face Blur (photo)
+
+Finds faces in a photo and covers them with a circle or square: blur, pixelate, black or an emoji. Press and drag on the After picture to add a cover for a missed face, or choose which faces to cover. The result is saved next to the original in the same format. No detector finds every face, so check the result; black is the safest cover.
+
+**Options:** Shape; Cover; Size; Strength; Emoji; Sensitivity; Which faces to cover; Picked faces; Extra covers
+
 ### Convert / resize image
 
 ![Convert / resize image](images/tools/imgconv.png)

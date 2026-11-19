@@ -2,6 +2,12 @@
 
 All notable changes to O.M. Video Studio. Newest first. Downloads for every version are on the [releases page](https://github.com/BigsmokeLondon/OM-Video-Studio/releases).
 
+## 1.20.0 - 2026-11-19
+
+**New tool: Face Blur (photo).** The same face finder and covers as Face Blur, for single pictures (JPG, PNG, WebP, BMP, TIFF). Cover faces with a circle or square in blur, pixelate, black or an emoji, add covers by hand by pressing and dragging on the After picture, and choose all faces, all except the ones you pick, or only the ones you pick. The result is saved next to the original in the same format. Phone photos that are turned (EXIF) come out the right way up. As with video, no detector finds every face, so check the result; black is the safest cover. 72 tools in total.
+
+**About window:** the buttons now sit on two rows so none are cut off.
+
 ## 1.19.0 - 2026-11-19
 
 **New tool: Face Blur.** Finds faces in a video and covers them with a circle or square that follows each face. Cover with blur, pixelate, solid black or an emoji (40 bundled). Adjust size, strength, sensitivity and how long a cover stays after a face is lost. The editor shows a preview of the covers on the chosen frame. Add extra covers by hand for faces it misses (press and drag on the After picture to place and size them, with optional start and end times), and choose to cover all faces, all except faces you pick, or only the faces you pick. Face finding uses a small bundled OpenCV model, so it works offline on Windows and Mac. No detector finds every face, so check the result; black is the safest cover. The installer is larger because OpenCV is now included. 71 tools in total.
