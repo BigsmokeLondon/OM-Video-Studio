@@ -1119,7 +1119,7 @@ def b_freeze(o, c):
     jobs = [
         job(["-i", c.src, "-t", f"{T}", "-r", fr] + vcodec() + aud, a_, T, tmpout=True),
         job(["-ss", f"{T}", "-i", c.src, "-frames:v", "1"], png, 0, tmpout=True),
-    ]
+   ]
     still = ["-loop", "1", "-framerate", fr, "-i", png]
     if c.has_a:
         still += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
@@ -1427,6 +1427,292 @@ def b_blur(o, c):
     return _vf(c, "_blur", f"boxblur={int(o['amt'])}:2")
 
 
+# ---------------------------------------------------------------- FACE BLUR (super tool)
+# Finds faces with a small bundled neural network (Ultra-Light-Fast-Generic-Face-Detector, MIT licence, Resource/facedetect, run by OpenCV - no download), follows each face from frame to frame, and covers it with a blur, pixelation, a black shape or an emoji picture (Resource/emoji). It is a pure-Python job: ffmpeg decodes the pictures into a pipe, we change them, and a second ffmpeg encodes them again with the original sound. OpenCV + numpy are loaded only when the tool runs, so the rest of the app works without them.
+FACE_DIR = RES_DIR / "Resource" / "facedetect"
+EMOJI_DIR = RES_DIR / "Resource" / "emoji"
+FACE_COVERS = ["Blur", "Pixelate", "Black", "Emoji"]
+FACE_SHAPES = ["Circle", "Square"]
+FACE_SENS = {"Low (fewest mistakes)": 0.9, "Normal": 0.7, "High (finds more)": 0.5}
+
+
+def emoji_names():
+    try:
+        return sorted(p.stem for p in EMOJI_DIR.glob("*.png"))
+    except OSError:
+        return []
+
+
+def _face_soft_mask(np, cv2, size, shape):
+    m = np.zeros((size, size), np.uint8)
+    if shape == "Circle":
+        cv2.circle(m, (size // 2, size // 2), size // 2 - 1, 255, -1)
+    else:
+        m[:] = 255
+    k = max(3, (size // 24) | 1)
+    m = cv2.GaussianBlur(m, (k, k), 0)
+    return m.astype(np.float32)[:, :, None] / 255.0
+
+
+def _face_apply(np, cv2, frame, cx, cy, side, o, emoji_img, cache):
+    """Cover one square area (centre cx,cy, width side) of frame (BGR, changed in place)."""
+    H, W = frame.shape[:2]
+    side = max(8, int(side))
+    x0, y0 = int(cx - side / 2), int(cy - side / 2)
+    x1, y1 = x0 + side, y0 + side
+    cx0, cy0, cx1, cy1 = max(0, x0), max(0, y0), min(W, x1), min(H, y1)
+    if cx1 - cx0 < 4 or cy1 - cy0 < 4:
+        return
+    roi = frame[cy0:cy1, cx0:cx1]
+    key = (side, o["shape"])
+    if key not in cache:
+        cache.clear()
+        cache[key] = _face_soft_mask(np, cv2, side, o["shape"])
+    mask = cache[key][cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
+    cover = o["cover"]
+    strength = max(1, min(100, int(o["strength"])))
+    if cover == "Blur":
+        k = max(3, int(side * strength / 45) | 1)
+        # blur a slightly larger crop so the edge of the picture does not smear in dark
+        eff = cv2.GaussianBlur(roi, (k, k), 0)
+    elif cover == "Pixelate":
+        blocks = max(3, int(40 - strength * 0.36))
+        h_, w_ = roi.shape[:2]
+        small = cv2.resize(roi, (max(2, w_ * blocks // side), max(2, h_ * blocks // side)), interpolation=cv2.INTER_AREA)
+        eff = cv2.resize(small, (w_, h_), interpolation=cv2.INTER_NEAREST)
+    elif cover == "Black":
+        eff = np.zeros_like(roi)
+    else:
+        eff = None
+    if eff is not None:
+        roi[:] = (eff.astype(np.float32) * mask + roi.astype(np.float32) * (1.0 - mask)).astype(np.uint8)
+    else:  # emoji picture, same square, with its own transparency
+        ek = ("emoji", side)
+        if ek not in cache:
+            cache[ek] = cv2.resize(emoji_img, (side, side), interpolation=cv2.INTER_AREA)
+        e = cache[ek][cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
+        a = (e[:, :, 3:4].astype(np.float32) / 255.0)
+        roi[:] = (e[:, :, :3].astype(np.float32) * a + roi.astype(np.float32) * (1.0 - a)).astype(np.uint8)
+
+
+def _face_iou(a, b):
+    ax0, ay0, ax1, ay1 = a[0] - a[2] / 2, a[1] - a[2] / 2, a[0] + a[2] / 2, a[1] + a[2] / 2
+    bx0, by0, bx1, by1 = b[0] - b[2] / 2, b[1] - b[2] / 2, b[0] + b[2] / 2, b[1] + b[2] / 2
+    iw, ih = min(ax1, bx1) - max(ax0, bx0), min(ay1, by1) - max(ay0, by0)
+    if iw <= 0 or ih <= 0:
+        return 0.0
+    inter = iw * ih
+    return inter / (a[2] * a[2] + b[2] * b[2] - inter)
+
+
+class FaceTracker:
+    """Keeps every face seen recently: smooths its position and keeps covering it for `hold` seconds after the detector loses it."""
+
+    def __init__(self, hold_frames, smooth=0.55):
+        self.tracks = []  # each: [cx, cy, side, last_seen_frame, hits]
+        self.hold = hold_frames
+        self.a = smooth
+
+    def update(self, dets, fi):
+        used = set()
+        for t in self.tracks:
+            best, bi = 0.15, -1
+            for i, d in enumerate(dets):
+                if i in used:
+                    continue
+                v = _face_iou(t, d)
+                if v > best:
+                    best, bi = v, i
+            if bi >= 0:
+                d = dets[bi]
+                used.add(bi)
+                a = self.a
+                t[0] += (d[0] - t[0]) * a
+                t[1] += (d[1] - t[1]) * a
+                t[2] += (d[2] - t[2]) * a
+                t[3] = fi
+                t[4] += 1
+        for i, d in enumerate(dets):
+            if i not in used:
+                self.tracks.append([d[0], d[1], d[2], fi, 1])
+        self.tracks = [t for t in self.tracks if fi - t[3] <= self.hold]
+
+    def current(self):
+        return [(t[0], t[1], t[2]) for t in self.tracks]
+
+
+def _face_detect(np, cv2, net, frame, thr):
+    """Run the face network on one picture. Returns [(cx, cy, side)] in the picture's own pixels."""
+    H, W = frame.shape[:2]
+    blob = cv2.dnn.blobFromImage(frame, 1 / 128.0, (640, 480), (127, 127, 127), swapRB=True)
+    net.setInput(blob)
+    sc, bx = net.forward(["scores", "boxes"])
+    sc = sc[0][:, 1]
+    keep = np.where(sc > thr)[0]
+    if not len(keep):
+        return []
+    boxes = []
+    for i in keep:
+        x1, y1, x2, y2 = bx[0][i]
+        boxes.append([float(x1 * W), float(y1 * H), float((x2 - x1) * W), float((y2 - y1) * H)])
+    idx = cv2.dnn.NMSBoxes(boxes, [float(sc[i]) for i in keep], float(thr), 0.3)
+    out = []
+    for i in np.array(idx).flatten():
+        x, y, w, h = boxes[int(i)]
+        if w < 10 or h < 10:
+            continue
+        out.append((x + w / 2, y + h / 2, max(w, h * 0.9)))
+    return out
+
+
+def _faceblur_job(c, o, outp):
+    def run(log, progress, cancel):
+        try:
+            import numpy as np
+            import cv2
+        except ImportError:
+            log("Face Blur needs the OpenCV and numpy Python packages (pip install opencv-python-headless numpy). "
+                "The installed app has them built in.")
+            return 1
+        cv2.setNumThreads(max(1, (os.cpu_count() or 2) - 1))
+        mp = FACE_DIR / "version-RFB-640.onnx"
+        try:
+            net = cv2.dnn.readNetFromONNX(str(mp))
+        except Exception:  # noqa: BLE001  (non-ASCII install path: load from a temp copy)
+            try:
+                tmpx = os.path.join(c.tmp, mp.name)
+                shutil.copyfile(mp, tmpx)
+                net = cv2.dnn.readNetFromONNX(tmpx)
+            except Exception as e:  # noqa: BLE001
+                log(f"Could not load the face detector ({mp.name}): {e}")
+                return 1
+        emoji_img = None
+        if o["cover"] == "Emoji":
+            ep = EMOJI_DIR / (o["emoji"] + ".png")
+            try:
+                emoji_img = cv2.imdecode(np.fromfile(str(ep), np.uint8), cv2.IMREAD_UNCHANGED)
+            except Exception:  # noqa: BLE001
+                emoji_img = None
+            if emoji_img is None or emoji_img.ndim < 3 or emoji_img.shape[2] != 4:
+                log("Could not load the emoji picture: " + str(ep))
+                return 1
+        v = c.info["v"] or {}
+        W, H = c.w, c.h
+        rot = 0
+        try:
+            rot = int((v.get("tags") or {}).get("rotate", 0))
+        except ValueError:
+            pass
+        for sd in v.get("side_data_list", []) or []:
+            if "rotation" in sd:
+                rot = int(float(sd["rotation"]))
+        if abs(rot) % 180 == 90:
+            W, H = H, W
+        W, H = W // 2 * 2, H // 2 * 2
+        fps_s = v.get("r_frame_rate") or "25/1"
+        fps = c.info["fps"] or 25.0
+        total = max(1, int(c.dur * fps))
+        thr = FACE_SENS.get(o["sens"], 0.7)
+        step = max(1, int(round(fps / 15.0)))
+        tracker = FaceTracker(int(max(0.0, float(o["hold"])) * fps) + step)
+        grow = max(50, min(400, int(o["size"]))) / 100.0
+        dec = [FFMPEG, "-hide_banner", "-nostdin", "-loglevel", "error", "-i", c.src, "-an", "-sn",
+               "-vf", f"scale={W}:{H}", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+        enc = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgr24",
+               "-s", f"{W}x{H}", "-r", fps_s, "-i", "-", "-i", c.src, "-map", "0:v:0", "-map", "1:a:0?"] + vcodec(20) + AAC + \
+              ["-movflags", "+faststart", outp]
+        log(f"Finding faces in {Path(c.src).name} ({W}x{H}, about {total} pictures). This takes a little longer than the video itself.")
+        pd = subprocess.Popen(dec, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        pe = subprocess.Popen(enc, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=NO_WINDOW)
+        errs = []
+        threading.Thread(target=lambda: [errs.append(x.decode("utf-8", "replace").rstrip()) for x in pe.stderr], daemon=True).start()
+        fsz = W * H * 3
+        cache = {}
+        fi = 0
+        seen = 0
+        ok = True
+        try:
+            while True:
+                if cancel.is_set():
+                    ok = False
+                    break
+                buf = pd.stdout.read(fsz)
+                if len(buf) < fsz:
+                    break
+                frame = np.frombuffer(buf, np.uint8).reshape(H, W, 3).copy()
+                if fi % step == 0:
+                    tracker.update(_face_detect(np, cv2, net, frame, thr), fi)
+                cur = tracker.current()
+                seen = max(seen, len(cur))
+                for (cx, cy, sd) in cur:
+                    _face_apply(np, cv2, frame, cx, cy, sd * grow, o, emoji_img, cache)
+                    if o["debug"]:
+                        h2 = int(sd / 2)
+                        cv2.rectangle(frame, (int(cx - h2), int(cy - h2)), (int(cx + h2), int(cy + h2)), (0, 255, 0), 2)
+                try:
+                    pe.stdin.write(frame.tobytes())
+                except (BrokenPipeError, OSError):
+                    ok = False
+                    break
+                fi += 1
+                if fi % 5 == 0:
+                    progress(min(0.99, fi / total))
+        finally:
+            for p_ in (pd,):
+                try:
+                    p_.stdout.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                if not ok:
+                    p_.kill()
+            try:
+                pe.stdin.close()
+            except Exception:  # noqa: BLE001
+                pass
+            if not ok:
+                pe.kill()
+            pd.wait()
+            pe.wait()
+        if not ok:
+            if cancel.is_set():
+                log("Cancelled.")
+            else:
+                for x in errs[-5:]:
+                    log(x)
+            try:
+                if os.path.exists(outp):
+                    os.remove(outp)
+            except OSError:
+                pass
+            return 1
+        if pe.returncode != 0 or fi == 0:
+            for x in errs[-5:]:
+                log(x)
+            return pe.returncode or 1
+        log(f"Done: covered faces in {fi} pictures (up to {seen} at the same time). "
+            "Check the result: no detector catches every face, and blurring does not hide voices, clothes or number plates.")
+        progress(1.0)
+        return 0
+    return run
+
+
+@op("Effects & Colour", "faceblur", "Face Blur",
+    [O("shape", "Shape", "choice", "Circle", FACE_SHAPES),
+     O("cover", "Cover faces with", "choice", "Blur", FACE_COVERS),
+     O("size", "Size (% of the face, 100 = just the face)", "int", 150),
+     O("strength", "Blur / pixel strength (1-100)", "int", 60),
+     O("emoji", "Emoji (when covering with an emoji)", "choice", "smile", emoji_names() or ["smile"]),
+     O("sens", "Sensitivity", "choice", "Normal", list(FACE_SENS)),
+     O("hold", "Keep covering after a face is lost (seconds)", "float", 0.5),
+     O("debug", "Draw green boxes where faces were found (to check)", "bool", False)],
+    kind="video", tip="Hide faces with a blur, pixels, a black shape or an emoji.")
+def b_faceblur(o, c):
+    if not c.has_v:
+        raise ValueError("Face Blur needs a video file.")
+    outp = c.out("_faceblur", ".mp4")
+    return [job([], outp, c.dur, func=_faceblur_job(c, o, outp), pc=True)]
+
+
 # Unsharp mask.
 @op("Effects & Colour", "sharpen", "Sharpen", [O("amt", "Strength (0.5-3)", "float", 1.0)])
 def b_sharpen(o, c):
@@ -1565,7 +1851,8 @@ def job_cmd(j, clean=False):
 def run_job(j, log, progress, cancel, show_cmd=False):
     """Runs one job dict. Returns the process return code."""
     if j.get("func"):
-        return j["func"](log)
+        # func jobs flagged pc=True also get the progress callback and the cancel event (the Face Blur engine uses them)
+        return j["func"](log, progress, cancel) if j.get("pc") else j["func"](log)
     if j.get("mkdir"):
         os.makedirs(j["mkdir"], exist_ok=True)
     cmd = job_cmd(j)
@@ -1762,6 +2049,7 @@ SLIDERS = {
     ("drawtext", "start"): ("pos", 0, None), ("drawtext", "end"): ("posend", 0, None),
     ("timer", "from"): ("num", 1, 600),
     ("ramp", "s"): ("len", 0, None), ("ramp", "e"): ("len", 0, None),
+    ("faceblur", "size"): ("inum", 50, 400), ("faceblur", "strength"): ("inum", 1, 100), ("faceblur", "hold"): ("num", 0, 3),
     ("resize", "width"): ("inum", 160, 3840), ("resize", "height"): ("inum", 120, 2160),
     ("crop", "w"): ("cw", 2, None), ("crop", "h"): ("ch", 2, None), ("crop", "x"): ("cx", 0, None), ("crop", "y"): ("cy", 0, None),
 }
@@ -2405,7 +2693,7 @@ TOOL_ICONS = {"trim": "\u2702", "join": "\U0001F517", "split": "\u2797", "speed"
               "social": "\U0001F4F2", "compress": "\U0001F5DC", "extract": "\U0001F3B5", "loudnorm": "\U0001F50A", "silence": "\U0001F507",
               "volume": "\U0001F50A", "fade": "\U0001F305", "denoise": "\U0001F9F9", "narration": "\U0001F399", "thumb": "\U0001F5BC",
               "frames": "\U0001F39E", "gif": "\U0001F300", "watermark": "\U0001F4A7", "pip": "\U0001F5D7", "slideshow": "\U0001F304",
-              "burnsubs": "\U0001F4AC", "drawtext": "\U0001F524", "timer": "\u23F1", "colour": "\U0001F3A8", "blur": "\U0001F32B",
+              "burnsubs": "\U0001F4AC", "drawtext": "\U0001F524", "timer": "\u23F1", "colour": "\U0001F3A8", "blur": "\U0001F32B", "faceblur": "\U0001F648",
               "bw": "\u26AB", "probe": "\U0001F50D"}
 # Light and dark colour sets; BRAND_* are the accent colours used for headers and the primary button.
 PALETTE = {
@@ -2511,6 +2799,7 @@ TOOL_DOCS = {
     "colour": "Adjust brightness, contrast, saturation and gamma. The defaults give a small, pleasing lift. The dialog shows a preview of the result, and a Play sample button.",
     "lut": "Apply a colour 'look' from a .cube LUT file, like the presets sold for cinematic grading.",
     "blur": "Blur the whole picture. Strength runs from 1 to 30.",
+    "faceblur": "Finds every face in a video, follows it as it moves and covers it with a circle or a square. Cover faces with a blur, pixels, a plain black shape or an emoji picture (40 are built in). Size sets how big the cover is compared with the face (150 = a little larger than the face). It keeps covering a face for half a second after it is lost, so a quick turn of the head does not show it. Tick the green boxes option first to check what was found. The sound is kept. No detector finds every face, and a blur does not hide a voice, clothes or a number plate, so always watch the result.",
     "sharpen": "Make the picture crisper. Strength runs from 0.5 to 3.",
     "vdenoise": "Reduce grain and noise in the picture. Strength runs from 1 to 10.",
     "vignette": "Darken the corners of the picture for a focused, cinematic look. Lower numbers give a stronger effect.",
