@@ -1589,33 +1589,6 @@ class FaceTracker:
         return [c[:3] for c in self.current_all(fi)]
 
 
-class PickSet:
-    """The faces the user picked. Each pick follows the nearest detected face (so it keeps pointing at the same person while the face is seen) and is forgotten `hold` pictures after the face was last seen. Faces that are not picked are never confused with picked ones by the app: if a picked face is lost for too long it simply counts as an ordinary face."""
-
-    def __init__(self, picks, hold):
-        self.waiting = list(picks)  # (x, y, size, from_frame, until_frame or None)
-        self.active = []
-        self.hold = hold
-
-    def update(self, dets, fi):
-        for w in [z for z in self.waiting if z[3] <= fi]:
-            self.waiting.remove(w)
-            self.active.append(dict(x=w[0], y=w[1], s=w[2], last=fi, until=w[4]))
-        for p in self.active:
-            best, bd = None, None
-            for d in dets:
-                dist = math.hypot(d[0] - p["x"], d[1] - p["y"])
-                if dist < 0.9 * max(d[2], p["s"]) and (bd is None or dist < bd):
-                    best, bd = d, dist
-            if best is not None:
-                p["x"], p["y"], p["s"], p["last"] = best[0], best[1], best[2], fi
-        self.active = [p for p in self.active if fi - p["last"] <= self.hold and (p["until"] is None or fi <= p["until"])]
-
-    def hits(self, c):
-        """True if cover c = (x, y, side) is on a picked face."""
-        return any(_face_ioa((c[0], c[1], c[2]), (p["x"], p["y"], p["s"])) >= 0.4 for p in self.active)
-
-
 def parse_manual_faces(text):
     """'x y size [from [to]]; ...' -> [(x%, y%, size%, from_s, to_s or None)]. x, y and size are percentages of the picture (size of its height); times in seconds. Raises ValueError with a plain message."""
     out = []
@@ -1693,6 +1666,75 @@ def _face_detect(np, cv2, net, frame, thr):
     return [(d[0], d[1], d[2] * 1.1) for d in merged]
 
 
+def _face_hits(c, pk):
+    """True if cover c = (x, y, side, ...) sits on one of the picked-face squares pk = [(x, y, side)]."""
+    return any(_face_ioa((c[0], c[1], c[2]), p) >= 0.4 for p in pk)
+
+
+def _faceblur_analyse(np, cv2, net, dec, W, H, total, step, thr, hold, seeds, picks, fps, cancel, progress, lock):
+    """First pass, used when faces are picked: read the whole video once to find and follow every face, then follow each picked face BOTH forwards and backwards from the moment it was picked, so the person is covered before and after that moment too. Returns (covers per picture, picked squares per picture), or None if cancelled / failed."""
+    tracker = FaceTracker(hold)
+    seeds = list(seeds)
+    cur_all, dets_at = [], {}
+    pd = subprocess.Popen(dec, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+    fsz = W * H * 3
+    fi = 0
+    try:
+        while True:
+            if cancel.is_set():
+                return None
+            buf = pd.stdout.read(fsz)
+            if len(buf) < fsz:
+                break
+            frame = np.frombuffer(buf, np.uint8).reshape(H, W, 3)
+            for sd_ in [z for z in seeds if z[3] <= fi]:
+                seeds.remove(sd_)
+                if sd_[4] >= fi:
+                    tracker.pin(sd_[0], sd_[1], sd_[2], sd_[4], sd_[5])
+            if fi % step == 0:
+                with lock:
+                    d_ = _face_detect(np, cv2, net, frame, thr)
+                dets_at[fi] = d_
+                tracker.update(d_, fi)
+            cur_all.append(tracker.current_all(fi))
+            fi += 1
+            if fi % 5 == 0:
+                progress(min(0.5, 0.5 * fi / max(1, total)))
+    finally:
+        try:
+            pd.stdout.close()
+        except Exception:  # noqa: BLE001
+            pass
+        pd.kill()
+        pd.wait()
+    n = len(cur_all)
+    if n == 0:
+        return None
+    pk_at = [[] for _ in range(n)]
+    keys = sorted(dets_at)
+    for (x, y, sz, t0, t1) in picks:
+        f0 = min(max(0, t0), n - 1)
+        for direction in (1, -1):
+            px, py, ps, last = x, y, sz, f0
+            fr = f0 if direction == 1 else f0 - 1
+            while 0 <= fr < n:
+                if direction == 1 and t1 is not None and fr > t1:
+                    break
+                if fr in dets_at:
+                    best, bd = None, None
+                    for d in dets_at[fr]:
+                        dist = math.hypot(d[0] - px, d[1] - py)
+                        if dist < 0.9 * max(d[2], ps) and (bd is None or dist < bd):
+                            best, bd = d, dist
+                    if best is not None:
+                        px, py, ps, last = best[0], best[1], best[2], fr
+                if abs(fr - last) > hold:
+                    break
+                pk_at[fr].append((px, py, ps))
+                fr += direction
+    return cur_all, pk_at
+
+
 def _faceblur_job(c, o, outp):
     def run(log, progress, cancel):
         try:
@@ -1755,7 +1797,6 @@ def _faceblur_job(c, o, outp):
         which = o.get("faces") or FACE_WHICH[0]
         pk_fr = [(x / 100.0 * W, y / 100.0 * H, sz / 100.0 * H, int(t0 * fps), (int(t1 * fps) if t1 is not None else None))
                  for (x, y, sz, t0, t1) in parse_manual_faces(o.get("picked", ""))]
-        picks = PickSet(pk_fr, int(3 * fps))
         if which != FACE_WHICH[0] and seeds:
             log(f"Note: {len(seeds)} extra cover(s) in the 'Extra covers' box are always drawn, even in this mode. Press Clear covers if you do not want them.")
         if which != FACE_WHICH[0] and not pk_fr:
@@ -1768,6 +1809,18 @@ def _faceblur_job(c, o, outp):
               ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-movflags", "+faststart", outp]
         log(f"Looking for faces in {Path(c.src).name} ({W}x{H}, about {total} pictures). This is slower than the video's own length, "
             "especially for big pictures.")
+        pre = None
+        if which != FACE_WHICH[0] and pk_fr:
+            log("Picked faces: reading the whole video first so each picked person is covered before and after the moment you picked them.")
+            pre = _faceblur_analyse(np, cv2, net, dec, W, H, total, step, thr, int(max(0.0, float(o["hold"])) * fps) + step + 1,
+                                    seeds, pk_fr, fps, cancel, progress, _FB_LOCK)
+            if pre is None:
+                if cancel.is_set():
+                    log("Cancelled.")
+                else:
+                    log("Could not read this video.")
+                return 1
+            log("Now drawing the covers.")
         pd = subprocess.Popen(dec, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NO_WINDOW)
         pe = subprocess.Popen(enc, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=NO_WINDOW)
         errs, derrs = [], []
@@ -1790,21 +1843,25 @@ def _faceblur_job(c, o, outp):
                 if len(buf) < fsz:
                     break
                 frame = np.frombuffer(buf, np.uint8).reshape(H, W, 3).copy()
-                for sd_ in [z for z in seeds if z[3] <= fi]:
-                    seeds.remove(sd_)
-                    if sd_[4] >= fi:
-                        tracker.pin(sd_[0], sd_[1], sd_[2], sd_[4], sd_[5])
-                if fi % step == 0 or (which != FACE_WHICH[0] and picks.waiting):
-                    with _FB_LOCK:
-                        dets_ = _face_detect(np, cv2, net, frame, thr)
+                if pre is not None:  # the first pass already found and followed everything
+                    cur = pre[0][fi] if fi < len(pre[0]) else []
+                    pkf = pre[1][fi] if fi < len(pre[1]) else []
+                    if which == FACE_WHICH[1]:
+                        cur = [c for c in cur if c[3] or not _face_hits(c, pkf)]
+                    else:
+                        cur = [c for c in cur if c[3] or _face_hits(c, pkf)]
+                else:
+                    for sd_ in [z for z in seeds if z[3] <= fi]:
+                        seeds.remove(sd_)
+                        if sd_[4] >= fi:
+                            tracker.pin(sd_[0], sd_[1], sd_[2], sd_[4], sd_[5])
                     if fi % step == 0:
+                        with _FB_LOCK:
+                            dets_ = _face_detect(np, cv2, net, frame, thr)
                         tracker.update(dets_, fi)
-                    picks.update(dets_, fi)
-                cur = tracker.current_all(fi)
-                if which == FACE_WHICH[1]:
-                    cur = [c for c in cur if c[3] or not picks.hits(c)]
-                elif which == FACE_WHICH[2]:
-                    cur = [c for c in cur if c[3] or picks.hits(c)]
+                    cur = tracker.current_all(fi)
+                    if which != FACE_WHICH[0]:  # faces to pick but none picked yet
+                        cur = [c for c in cur if c[3]] if which == FACE_WHICH[2] else cur
                 cur = [c[:3] for c in cur]
                 seen = max(seen, len(cur))
                 if cur:
@@ -1822,7 +1879,7 @@ def _faceblur_job(c, o, outp):
                     break
                 fi += 1
                 if fi % 5 == 0:
-                    progress(min(0.99, fi / total))
+                    progress(min(0.99, (0.5 + 0.5 * fi / total) if pre is not None else fi / total))
         finally:
             try:
                 pd.stdout.close()
