@@ -72,7 +72,7 @@ GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for 
 CONTACT_URL = "https://formspree.io/f/xeagkqkp"
 # Optional donation page (shown as a quiet "Support" button in the About window). Put the full address here, e.g. "https://paypal.me/yourname".
 # While it is empty, no donation button is shown.
-DONATE_URL = "https://paypal.me/Industries101"
+DONATE_URL = ""  # parked: set to "https://paypal.me/Industries101" to show the Support button
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
 SUB_EXT = {".srt", ".ass", ".vtt"}
