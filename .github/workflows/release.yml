@@ -40,7 +40,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Quick self-test of the engine
-        run: python om_video_studio.py --selftest trim,split,convert,compress,extract,thumb,faceblur,extras
+        run: python om_video_studio.py --selftest trim,split,convert,compress,extract,thumb,faceblur,faceblurphoto,extras
 
       - name: Build app with PyInstaller
         shell: cmd
@@ -111,7 +111,7 @@ jobs:
           mkdir -p Output
           # faulthandler prints where Python is stuck and exits if the test runs longer than 3 minutes.
           # Output goes to a file (not a pipe) so an orphaned child process cannot keep this step waiting.
-          python -u -c "import faulthandler,runpy,sys; faulthandler.dump_traceback_later(180, exit=True); sys.argv=['om_video_studio.py','--selftest','trim,split,convert,compress,extract,thumb,faceblur,extras']; runpy.run_path('om_video_studio.py', run_name='__main__')" > Output/selftest-${{ matrix.arch }}.txt 2>&1 < /dev/null
+          python -u -c "import faulthandler,runpy,sys; faulthandler.dump_traceback_later(180, exit=True); sys.argv=['om_video_studio.py','--selftest','trim,split,convert,compress,extract,thumb,faceblur,faceblurphoto,extras']; runpy.run_path('om_video_studio.py', run_name='__main__')" > Output/selftest-${{ matrix.arch }}.txt 2>&1 < /dev/null
           RC=$?
           ps aux | grep -iE 'ffmpeg|ffprobe|afplay|python' | grep -v grep > Output/processes-${{ matrix.arch }}.txt || true
           pkill -f ffmpeg || true

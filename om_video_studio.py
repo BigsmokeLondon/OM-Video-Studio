@@ -1932,6 +1932,51 @@ def _faceblur_job(c, o, outp):
 _FB_NET = {}
 
 
+def _faceblur_still(np, cv2, o, frame, t, emoji_img):
+    """Find the faces in ONE picture and cover them (in place). t = time in the video, or None for a photo (times in the covers are ignored)."""
+    grow = max(50, min(400, int(o["size"]))) / 100.0
+    cache = {}
+    with _FB_LOCK:
+        if "net" not in _FB_NET:
+            _FB_NET["net"] = _face_net_load(np, cv2)
+        faces = _face_detect(np, cv2, _FB_NET["net"], frame, FACE_SENS.get(o["sens"], 0.7))
+    extra_ = []  # hand-placed covers are always drawn, whatever "Which faces to cover" says (same as Run)
+    try:
+        hh, ww = frame.shape[:2]
+        for (x, y, sz, t0, t1) in parse_manual_faces(o.get("manual", "")):
+            if t is None or (t0 - 0.05 <= t and t <= (t1 if t1 is not None else t0 + 3.0) + 0.05):
+                sd_ = sz / 100.0 * hh
+                if not any(abs(cx_ - x / 100.0 * ww) < sd_ * 0.6 and abs(cy_ - y / 100.0 * hh) < sd_ * 0.6 for (cx_, cy_, _s) in faces):
+                    extra_.append((x / 100.0 * ww, y / 100.0 * hh, sd_))
+    except ValueError:
+        pass
+    which = o.get("faces") or FACE_WHICH[0]
+    kept = []
+    if which != FACE_WHICH[0]:
+        try:
+            hh, ww = frame.shape[:2]
+            pks = [(x / 100.0 * ww, y / 100.0 * hh, sz / 100.0 * hh) for (x, y, sz, t0, t1) in parse_manual_faces(o.get("picked", ""))
+                   if t is None or (t0 - 0.05 <= t and (t1 is None or t <= t1 + 0.05))]
+        except ValueError:
+            pks = []
+        hit = [any(math.hypot(f[0] - px, f[1] - py) < 0.9 * max(f[2], ps) for (px, py, ps) in pks) for f in faces]
+        if which == FACE_WHICH[1]:
+            kept = [f for f, h_ in zip(faces, hit) if h_]
+            faces = [f for f, h_ in zip(faces, hit) if not h_]
+        else:
+            kept = [f for f, h_ in zip(faces, hit) if not h_]
+            faces = [f for f, h_ in zip(faces, hit) if h_]
+    faces = faces + extra_
+    for (cx, cy, sd) in kept:  # faces left uncovered: a thin green ring so you can see what the picks do
+        cv2.circle(frame, (int(cx), int(cy)), int(sd * 0.6), (0, 200, 0), 2)
+    for (cx, cy, sd) in faces:
+        _face_apply(np, cv2, frame, cx, cy, sd * grow * (1.0 if o["shape"] == "Square" else 1.15), o, emoji_img, cache)
+        if o["debug"]:
+            h2 = int(sd / 2)
+            cv2.rectangle(frame, (int(cx - h2), int(cy - h2)), (int(cx + h2), int(cy + h2)), (0, 255, 0), 2)
+    return frame
+
+
 def faceblur_preview(o, src, t, out_png):
     """One-picture preview for Face Blur: grab the frame at time t, find the faces in it and cover them. True on success."""
     try:
@@ -1942,9 +1987,12 @@ def faceblur_preview(o, src, t, out_png):
     tmp = tempfile.mkdtemp(prefix="ffprev_")
     try:
         fp = os.path.join(tmp, "f.png")
-        if not grab_frame(src, t, fp, box=None):
-            return False
-        frame = cv2.imdecode(np.fromfile(fp, np.uint8), cv2.IMREAD_COLOR)
+        if Path(src).suffix.lower() in IMAGE_EXT:  # a photo: read it exactly the way the job does (so turned phone photos match)
+            frame = cv2.imdecode(np.fromfile(str(src), np.uint8), cv2.IMREAD_COLOR)
+        else:
+            if not grab_frame(src, t, fp, box=None):
+                return False
+            frame = cv2.imdecode(np.fromfile(fp, np.uint8), cv2.IMREAD_COLOR)
         if frame is None:
             return False
         emoji_img = None
@@ -1952,46 +2000,7 @@ def faceblur_preview(o, src, t, out_png):
             emoji_img = cv2.imdecode(np.fromfile(str(EMOJI_DIR / (o["emoji"] + ".png")), np.uint8), cv2.IMREAD_UNCHANGED)
             if emoji_img is None or emoji_img.ndim < 3 or emoji_img.shape[2] != 4:
                 return False
-        grow = max(50, min(400, int(o["size"]))) / 100.0
-        cache = {}
-        with _FB_LOCK:
-            if "net" not in _FB_NET:
-                _FB_NET["net"] = _face_net_load(np, cv2)
-            faces = _face_detect(np, cv2, _FB_NET["net"], frame, FACE_SENS.get(o["sens"], 0.7))
-        extra_ = []  # hand-placed covers are always drawn, whatever "Which faces to cover" says (same as Run)
-        try:
-            hh, ww = frame.shape[:2]
-            for (x, y, sz, t0, t1) in parse_manual_faces(o.get("manual", "")):
-                if t0 - 0.05 <= t and t <= (t1 if t1 is not None else t0 + 3.0) + 0.05:
-                    sd_ = sz / 100.0 * hh
-                    if not any(abs(cx_ - x / 100.0 * ww) < sd_ * 0.6 and abs(cy_ - y / 100.0 * hh) < sd_ * 0.6 for (cx_, cy_, _s) in faces):
-                        extra_.append((x / 100.0 * ww, y / 100.0 * hh, sd_))
-        except ValueError:
-            pass
-        which = o.get("faces") or FACE_WHICH[0]
-        kept = []
-        if which != FACE_WHICH[0]:
-            try:
-                hh, ww = frame.shape[:2]
-                pks = [(x / 100.0 * ww, y / 100.0 * hh, sz / 100.0 * hh) for (x, y, sz, t0, t1) in parse_manual_faces(o.get("picked", ""))
-                       if t0 - 0.05 <= t and (t1 is None or t <= t1 + 0.05)]
-            except ValueError:
-                pks = []
-            hit = [any(math.hypot(f[0] - px, f[1] - py) < 0.9 * max(f[2], ps) for (px, py, ps) in pks) for f in faces]
-            if which == FACE_WHICH[1]:
-                kept = [f for f, h_ in zip(faces, hit) if h_]
-                faces = [f for f, h_ in zip(faces, hit) if not h_]
-            else:
-                kept = [f for f, h_ in zip(faces, hit) if not h_]
-                faces = [f for f, h_ in zip(faces, hit) if h_]
-        faces = faces + extra_
-        for (cx, cy, sd) in kept:  # faces left uncovered: a thin green ring so you can see what the picks do
-            cv2.circle(frame, (int(cx), int(cy)), int(sd * 0.6), (0, 200, 0), 2)
-        for (cx, cy, sd) in faces:
-            _face_apply(np, cv2, frame, cx, cy, sd * grow * (1.0 if o["shape"] == "Square" else 1.15), o, emoji_img, cache)
-            if o["debug"]:
-                h2 = int(sd / 2)
-                cv2.rectangle(frame, (int(cx - h2), int(cy - h2)), (int(cx + h2), int(cy + h2)), (0, 255, 0), 2)
+        frame = _faceblur_still(np, cv2, o, frame, None if Path(src).suffix.lower() in IMAGE_EXT else t, emoji_img)
         ok, buf = cv2.imencode(".png", frame)
         if not ok:
             return False
@@ -2001,6 +2010,68 @@ def faceblur_preview(o, src, t, out_png):
         return False
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# Face Blur for photos: same finder and covers as the video tool, one picture in, one picture out (same format, orientation applied).
+def _faceblur_photo_job(c, o, outp):
+    def run(log, progress, cancel):
+        try:
+            import numpy as np
+            import cv2
+        except ImportError:
+            log("Face Blur needs the OpenCV and numpy Python packages. Install them with: pip install opencv-python-headless numpy")
+            return 1
+        try:
+            emoji_img = None
+            if o["cover"] == "Emoji":
+                emoji_img = cv2.imdecode(np.fromfile(str(EMOJI_DIR / (o["emoji"] + ".png")), np.uint8), cv2.IMREAD_UNCHANGED)
+                if emoji_img is None or emoji_img.ndim < 3 or emoji_img.shape[2] != 4:
+                    log("Could not load the emoji picture.")
+                    return 1
+            frame = cv2.imdecode(np.fromfile(c.src, np.uint8), cv2.IMREAD_COLOR)
+            if frame is None:
+                log("Could not read the picture: " + c.src)
+                return 1
+            with _FB_LOCK:
+                if "net" not in _FB_NET:
+                    _FB_NET["net"] = _face_net_load(np, cv2)
+            progress(0.3)
+            n0 = frame.shape[:2]
+            frame = _faceblur_still(np, cv2, o, frame, None, emoji_img)
+            ext = Path(outp).suffix.lower()
+            params = [cv2.IMWRITE_JPEG_QUALITY, 95] if ext in (".jpg", ".jpeg") else ([cv2.IMWRITE_WEBP_QUALITY, 95] if ext == ".webp" else [])
+            ok, buf = cv2.imencode(ext, frame, params)
+            if not ok:
+                log("Could not save the picture as " + ext)
+                return 1
+            buf.tofile(outp)
+            progress(1.0)
+            return 0
+        except Exception as e:  # noqa: BLE001
+            log(f"Face Blur (photo) failed: {e!r}")
+            return 1
+    return run
+
+
+@op("Images & Frames", "faceblurphoto", "Face Blur (photo)",
+    [O("shape", "Shape", "choice", "Circle", FACE_SHAPES),
+     O("cover", "Cover faces with", "choice", "Blur", FACE_COVERS),
+     O("size", "Size (% of the face, 100 = just the face)", "int", 110),
+     O("strength", "Blur / pixel strength (1-100)", "int", 60),
+     O("emoji", "Emoji (when covering with an emoji)", "choice", "smile", emoji_names() or ["smile"]),
+     O("sens", "Sensitivity", "choice", "Normal", list(FACE_SENS)),
+     O("faces", "Which faces to cover", "choice", FACE_WHICH[0], FACE_WHICH),
+     O("picked", "Picked faces (choose 'Pick a face' under the picture, then press on a face)", "text", ""),
+     O("manual", "Extra covers for faces it misses (press on the After picture to add)", "text", ""),
+     O("debug", "Draw green boxes where faces were found (to check)", "bool", False)],
+    kind="image", tip="Hide faces in a photo with a blur, pixels, a black shape or an emoji.")
+def b_faceblur_photo(o, c):
+    if c.ext.lower() not in (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"):
+        raise ValueError("Face Blur (photo) works on JPG, PNG, WebP, BMP and TIFF pictures.")
+    parse_manual_faces(o.get("manual", ""))
+    parse_manual_faces(o.get("picked", ""))
+    outp = c.out("_faceblur", c.ext)
+    return [job([], outp, 0, func=_faceblur_photo_job(c, o, outp), pc=True)]
 
 
 @op("Effects & Colour", "faceblur", "Face Blur",
@@ -2361,7 +2432,7 @@ SLIDERS = {
     ("drawtext", "start"): ("pos", 0, None), ("drawtext", "end"): ("posend", 0, None),
     ("timer", "from"): ("num", 1, 600),
     ("ramp", "s"): ("len", 0, None), ("ramp", "e"): ("len", 0, None),
-    ("faceblur", "size"): ("inum", 50, 400), ("faceblur", "strength"): ("inum", 1, 100), ("faceblur", "hold"): ("num", 0, 3),
+    ("faceblur", "size"): ("inum", 50, 400), ("faceblur", "strength"): ("inum", 1, 100), ("faceblurphoto", "size"): ("inum", 50, 400), ("faceblurphoto", "strength"): ("inum", 1, 100), ("faceblur", "hold"): ("num", 0, 3),
     ("resize", "width"): ("inum", 160, 3840), ("resize", "height"): ("inum", 120, 2160),
     ("crop", "w"): ("cw", 2, None), ("crop", "h"): ("ch", 2, None), ("crop", "x"): ("cx", 0, None), ("crop", "y"): ("cy", 0, None),
 }
@@ -2561,7 +2632,7 @@ def png_size(path):
 # Render the 'after' picture for the live preview using the same filter the real job would use.
 def preview_frame(spec, opts, src, t, out_png):
     """Render ONE frame of what an operation would do (its real filters, no encoding) to a PNG. True on success."""
-    if spec["id"] == "faceblur":
+    if spec["id"] in ("faceblur", "faceblurphoto"):
         return faceblur_preview(opts, src, t, out_png)
     tmp = tempfile.mkdtemp(prefix="ffprev_")
     try:
@@ -3007,7 +3078,7 @@ TOOL_ICONS = {"trim": "\u2702", "join": "\U0001F517", "split": "\u2797", "speed"
               "social": "\U0001F4F2", "compress": "\U0001F5DC", "extract": "\U0001F3B5", "loudnorm": "\U0001F50A", "silence": "\U0001F507",
               "volume": "\U0001F50A", "fade": "\U0001F305", "denoise": "\U0001F9F9", "narration": "\U0001F399", "thumb": "\U0001F5BC",
               "frames": "\U0001F39E", "gif": "\U0001F300", "watermark": "\U0001F4A7", "pip": "\U0001F5D7", "slideshow": "\U0001F304",
-              "burnsubs": "\U0001F4AC", "drawtext": "\U0001F524", "timer": "\u23F1", "colour": "\U0001F3A8", "blur": "\U0001F32B", "faceblur": "\U0001F648",
+              "burnsubs": "\U0001F4AC", "drawtext": "\U0001F524", "timer": "\u23F1", "colour": "\U0001F3A8", "blur": "\U0001F32B", "faceblur": "\U0001F648", "faceblurphoto": "\U0001F648",
               "bw": "\u26AB", "probe": "\U0001F50D"}
 # Light and dark colour sets; BRAND_* are the accent colours used for headers and the primary button.
 PALETTE = {
@@ -3113,6 +3184,7 @@ TOOL_DOCS = {
     "colour": "Adjust brightness, contrast, saturation and gamma. The defaults give a small, pleasing lift. The dialog shows a preview of the result, and a Play sample button.",
     "lut": "Apply a colour 'look' from a .cube LUT file, like the presets sold for cinematic grading.",
     "blur": "Blur the whole picture. Strength runs from 1 to 30.",
+    "faceblurphoto": "Looks for faces in a photo and covers each one with a circle or a square: a blur, pixels, a plain black shape or an emoji picture (40 are built in). Size sets how big the cover is compared with the face (150 = a little larger than the face). Press on the After picture and drag outwards to add a cover for a face it missed, or choose which faces to cover. The result is saved next to the original as a new picture in the same format. Black is the safest cover; a light blur or pixelation can sometimes be recognised. No detector finds every face (small, turned-away or hidden faces can be missed), so always check the result before you share it.",
     "faceblur": "Looks for faces in a video, follows each one as it moves and covers it with a circle or a square. Cover faces with a blur, pixels, a plain black shape or an emoji picture (40 are built in). Size sets how big the cover is compared with the face (150 = a little larger than the face). A face that is lost is still covered for the 'keep covering' time (half a second by default). Tick the green boxes option first to check what was found. All sound tracks are kept (re-encoded as AAC); subtitles and chapters are not. Black is the safest cover; a light blur or pixelation can sometimes be recognised. No detector finds every face (small, turned-away or hidden faces can be missed), and a blur does not hide a voice, clothes or a number plate, so always watch the result before you share it. Big videos take much longer than their own length to process.",
     "sharpen": "Make the picture crisper. Strength runs from 0.5 to 3.",
     "vdenoise": "Reduce grain and noise in the picture. Strength runs from 1 to 10.",
@@ -6064,7 +6136,7 @@ def gui():
             set_view()
         # Face Blur: press on a missed face in the After picture and drag outwards to set the size; the cover is written into the "Extra covers" box.
         #  It follows that face while the detector sees it and holds its place for 3 seconds after (or until the end time, if one is given).
-        if spec["id"] == "faceblur" and "manual" in tkvars and len(labels) > 1:
+        if spec["id"] in ("faceblur", "faceblurphoto") and "manual" in tkvars and len(labels) > 1:
             pos_var_ref = {"v": None}
             drag = {}
             click_mode = tk.StringVar(value="cover")
@@ -6144,8 +6216,9 @@ def gui():
             ttk.Radiobutton(crow, text="Pick a face", variable=click_mode, value="pick").pack(side="left")
             mrow = ttk.Frame(box)
             mrow.pack(fill="x", pady=(0, 4))
-            ttk.Button(mrow, text="Last cover starts here", command=lambda: edit_last(3)).pack(side="left", padx=(0, 4))
-            ttk.Button(mrow, text="ends here", command=lambda: edit_last(4)).pack(side="left", padx=(0, 4))
+            if spec["id"] == "faceblur":  # start / end times only make sense in a video
+                ttk.Button(mrow, text="Last cover starts here", command=lambda: edit_last(3)).pack(side="left", padx=(0, 4))
+                ttk.Button(mrow, text="ends here", command=lambda: edit_last(4)).pack(side="left", padx=(0, 4))
             ttk.Button(mrow, text="Remove last", command=remove_last).pack(side="left", padx=(0, 4))
             ttk.Button(mrow, text="Clear covers", command=lambda: tkvars["manual"].set("")).pack(side="left", padx=(0, 4))
             ttk.Button(mrow, text="Clear picks", command=lambda: tkvars["picked"].set("") if "picked" in tkvars else None).pack(side="left")
