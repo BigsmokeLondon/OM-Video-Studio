@@ -2,6 +2,12 @@
 
 All notable changes to O.M. Video Studio. Newest first. Downloads for every version are on the [releases page](https://github.com/BigsmokeLondon/OM-Video-Studio/releases).
 
+## 1.19.0 - 2026-11-19
+
+**New tool: Face Blur.** Finds faces in a video and covers them with a circle or square that follows each face. Cover with blur, pixelate, solid black or an emoji (40 bundled). Adjust size, strength, sensitivity and how long a cover stays after a face is lost. The editor shows a preview of the covers on the chosen frame. Add extra covers by hand for faces it misses (press and drag on the After picture to place and size them, with optional start and end times), and choose to cover all faces, all except faces you pick, or only the faces you pick. Face finding uses a small bundled OpenCV model, so it works offline on Windows and Mac. No detector finds every face, so check the result; black is the safest cover. The installer is larger because OpenCV is now included. 71 tools in total.
+
+**Also in this release (1.18.2):** clearer Trim and Trim audio descriptions, and a fix so "Normal size" works again after "Fill screen".
+
 ## 1.18.2 - 2026-11-18
 
 **Clearer tool descriptions.** The descriptions of Trim, Crop and Trim audio (About window and the illustrated guide) now mention Fill screen, the draggable crop box, audio zoom, the length label and the green play marker with Pause. Guide screenshots refreshed.

@@ -534,6 +534,12 @@ Apply a colour 'look' from a .cube LUT file, like the presets sold for cinematic
 
 **Options:** LUT file (.cube)
 
+### Face Blur
+
+Finds faces in the video and covers them with a circle or square that follows each face. Cover with blur, pixelate, black or an emoji. The editor previews the covers. Press and drag on the After picture to add extra covers for faces it misses, or choose to cover all faces, all except faces you pick, or only the faces you pick. No detector finds every face, so check the result; black is the safest cover.
+
+**Options:** Shape; Cover; Size; Strength; Emoji; Sensitivity; Keep covering after a face is lost (seconds); Which faces to cover; Picked faces; Extra covers
+
 ### Blur
 
 ![Blur](images/tools/blur.png)
