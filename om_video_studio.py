@@ -70,6 +70,9 @@ GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for 
 # Contact form in the About window: messages are delivered by Formspree (its own form, separate from the Punjab & Kashmir Explorer).
 # Put the form's address here, e.g. "https://formspree.io/f/xxxxxxxx". While it is empty, Send explains that and Copy message still works.
 CONTACT_URL = "https://formspree.io/f/xeagkqkp"
+# Optional donation page (shown as a quiet "Support" button in the About window). Put the full address here, e.g. "https://paypal.me/yourname".
+# While it is empty, no donation button is shown.
+DONATE_URL = ""
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma"}
 SUB_EXT = {".srt", ".ass", ".vtt"}
@@ -3483,7 +3486,12 @@ def gui():
         btns.pack(anchor="w")
         ttk.Button(btns, text="Open the illustrated guide", command=lambda: webbrowser.open(ABOUT_URL)).pack(side="left")
         ttk.Button(btns, text="GitHub page", command=lambda: webbrowser.open(f"https://github.com/{GITHUB_REPO}")).pack(side="left", padx=6)
+        if DONATE_URL:
+            ttk.Button(btns, text="Support the project", command=lambda: webbrowser.open(DONATE_URL)).pack(side="left", padx=6)
         ttk.Button(btns, text="Close", command=w.destroy).pack(side="left")
+        if DONATE_URL:
+            ttk.Label(tx, text="O.M. Video Studio is free. If it saves you time, a small donation helps me keep improving it. Thank you!",
+                      style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(8, 0))
         # ---- Contact form (bottom of the About window)
         cf = ttk.LabelFrame(w, text="Help improve O.M. Video Studio", padding=(12, 8))
         cf.pack(side="bottom", fill="x", padx=18, pady=(0, 14))
