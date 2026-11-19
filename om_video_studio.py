@@ -3486,9 +3486,11 @@ def gui():
         btns.pack(anchor="w")
         ttk.Button(btns, text="Open the illustrated guide", command=lambda: webbrowser.open(ABOUT_URL)).pack(side="left")
         ttk.Button(btns, text="GitHub page", command=lambda: webbrowser.open(f"https://github.com/{GITHUB_REPO}")).pack(side="left", padx=6)
+        btns2 = ttk.Frame(tx)
+        btns2.pack(anchor="w", pady=(6, 0))
         if DONATE_URL:
-            ttk.Button(btns, text="Support the project", command=lambda: webbrowser.open(DONATE_URL)).pack(side="left", padx=6)
-        ttk.Button(btns, text="Close", command=w.destroy).pack(side="left")
+            ttk.Button(btns2, text="\u2764  Support the project", command=lambda: webbrowser.open(DONATE_URL)).pack(side="left", padx=(0, 6))
+        ttk.Button(btns2, text="Close", command=w.destroy).pack(side="left")
         if DONATE_URL:
             ttk.Label(tx, text="O.M. Video Studio is free. If it saves you time, a small donation helps me keep improving it. Thank you!",
                       style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(8, 0))
