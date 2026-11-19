@@ -1932,7 +1932,7 @@ def _faceblur_job(c, o, outp):
 _FB_NET = {}
 
 
-def _faceblur_still(np, cv2, o, frame, t, emoji_img):
+def _faceblur_still(np, cv2, o, frame, t, emoji_img, rings=False):
     """Find the faces in ONE picture and cover them (in place). t = time in the video, or None for a photo (times in the covers are ignored)."""
     grow = max(50, min(400, int(o["size"]))) / 100.0
     cache = {}
@@ -1967,7 +1967,7 @@ def _faceblur_still(np, cv2, o, frame, t, emoji_img):
             kept = [f for f, h_ in zip(faces, hit) if not h_]
             faces = [f for f, h_ in zip(faces, hit) if h_]
     faces = faces + extra_
-    for (cx, cy, sd) in kept:  # faces left uncovered: a thin green ring so you can see what the picks do
+    for (cx, cy, sd) in (kept if rings else []):  # preview only: a thin green ring on faces left uncovered so you can see what the picks do
         cv2.circle(frame, (int(cx), int(cy)), int(sd * 0.6), (0, 200, 0), 2)
     for (cx, cy, sd) in faces:
         _face_apply(np, cv2, frame, cx, cy, sd * grow * (1.0 if o["shape"] == "Square" else 1.15), o, emoji_img, cache)
@@ -2000,7 +2000,7 @@ def faceblur_preview(o, src, t, out_png):
             emoji_img = cv2.imdecode(np.fromfile(str(EMOJI_DIR / (o["emoji"] + ".png")), np.uint8), cv2.IMREAD_UNCHANGED)
             if emoji_img is None or emoji_img.ndim < 3 or emoji_img.shape[2] != 4:
                 return False
-        frame = _faceblur_still(np, cv2, o, frame, None if Path(src).suffix.lower() in IMAGE_EXT else t, emoji_img)
+        frame = _faceblur_still(np, cv2, o, frame, None if Path(src).suffix.lower() in IMAGE_EXT else t, emoji_img, rings=True)
         ok, buf = cv2.imencode(".png", frame)
         if not ok:
             return False
