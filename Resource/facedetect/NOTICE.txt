@@ -1,0 +1,4 @@
+version-RFB-640.onnx: Ultra-Light-Fast-Generic-Face-Detector-1MB by Linzaer
+(https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB), MIT licence
+(see LICENSE-UltraLightFaceDetector.txt).
+The model is run with OpenCV (Apache-2.0, https://opencv.org) and NumPy (BSD-3-Clause, https://numpy.org).

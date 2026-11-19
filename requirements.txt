@@ -2,3 +2,5 @@ sv-ttk
 tkinterdnd2
 pywinstyles; sys_platform == "win32"
 certifi
+opencv-python-headless>=4.10,<6
+numpy>=1.26
