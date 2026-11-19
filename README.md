@@ -5,6 +5,10 @@
 Free point-and-click video, audio and image tools for Windows, powered by ffmpeg. Pick a file, press a button. No commands to learn.
 Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, thumbnails, one-click social-media export and more (71 operations).
 
+## Support
+
+O.M. Video Studio is free. If it saves you time, you can [say thanks with a small donation](https://paypal.me/Industries101).
+
 ## Screenshots
 
 | Pick a tool | One-click social export | Finished |
