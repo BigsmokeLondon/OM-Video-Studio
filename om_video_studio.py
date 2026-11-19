@@ -4176,12 +4176,17 @@ def gui():
         top_.bind("<Escape>", lambda e: top_.destroy())
         has_preview = spec["id"] in ("trim", "crop") or spec["id"] in STRIP_OPS or spec["kind"] in ("video", "image")
         if has_preview:
+            fs_keep = {}
+
             def fill_screen():
                 try:
                     if top_.state() == "zoomed":
                         top_.state("normal")
                         fs_btn.configure(text="Fill screen")
+                        if fs_keep:  # go back to the size it had; otherwise it keeps the big size the pictures asked for
+                            top_.geometry(f"{fs_keep['w']}x{fs_keep['h']}")
                     else:
+                        fs_keep["w"], fs_keep["h"] = top_.winfo_width(), top_.winfo_height()
                         top_.state("zoomed")
                         fs_btn.configure(text="Normal size")
                 except tk.TclError:
