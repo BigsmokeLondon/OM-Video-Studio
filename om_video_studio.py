@@ -1544,6 +1544,8 @@ class FaceTracker:
                 t["s"] = 0.5 * t["s"] + 0.5 * d[2]  # only the size is smoothed
                 t["s"] = max(t["s"], d[2] * 0.9)
                 t["last"] = fi
+                if t.get("pf"):
+                    t["pin"] = max(t["pin"], fi + t["pf"])
         for i, d in enumerate(dets):
             if i not in used:
                 self.tracks.append(dict(x=d[0], y=d[1], s=d[2], vx=0.0, vy=0.0, last=fi))
@@ -1556,9 +1558,9 @@ class FaceTracker:
                 keep.append(t)
         self.tracks = keep
 
-    def pin(self, x, y, s, until):
-        """A cover placed by hand: stays where it was put until frame `until`, and follows a detected face that comes into it."""
-        self.tracks.append(dict(x=x, y=y, s=s, vx=0.0, vy=0.0, last=-10 ** 9, pin=until))
+    def pin(self, x, y, s, until, follow=0):
+        """A cover placed by hand: stays where it was put until frame `until`, and follows a detected face that comes into it. With follow>0 (no end time given) it lasts until no face has been seen there for `follow` pictures."""
+        self.tracks.append(dict(x=x, y=y, s=s, vx=0.0, vy=0.0, last=-10 ** 9, pin=until, pf=follow))
 
     def current(self, fi):
         out = []
@@ -1701,7 +1703,8 @@ def _faceblur_job(c, o, outp):
         thr = FACE_SENS.get(o["sens"], 0.7)
         step = 1 if fps <= 32 else 2  # look for faces on (nearly) every picture
         tracker = FaceTracker(int(max(0.0, float(o["hold"])) * fps) + step + 1)
-        seeds = [(x / 100.0 * W, y / 100.0 * H, sz / 100.0 * H, int(t0 * fps), (int(t1 * fps) if t1 is not None else 10 ** 9))
+        follow = int(3 * fps)  # no end time: follow the face while it is seen, and hold its place for 3 seconds after
+        seeds = [(x / 100.0 * W, y / 100.0 * H, sz / 100.0 * H, int(t0 * fps), (int(t1 * fps) if t1 is not None else int(t0 * fps) + follow), 0 if t1 is not None else follow)
                  for (x, y, sz, t0, t1) in parse_manual_faces(o.get("manual", ""))]
         grow = max(50, min(400, int(o["size"]))) / 100.0
         dec = [FFMPEG, "-hide_banner", "-nostdin", "-loglevel", "error", "-i", c.src, "-an", "-sn", "-dn",
@@ -1737,7 +1740,7 @@ def _faceblur_job(c, o, outp):
                 for sd_ in [z for z in seeds if z[3] <= fi]:
                     seeds.remove(sd_)
                     if sd_[4] >= fi:
-                        tracker.pin(sd_[0], sd_[1], sd_[2], sd_[4])
+                        tracker.pin(sd_[0], sd_[1], sd_[2], sd_[4], sd_[5])
                 if fi % step == 0:
                     with _FB_LOCK:
                         tracker.update(_face_detect(np, cv2, net, frame, thr), fi)
@@ -1840,7 +1843,7 @@ def faceblur_preview(o, src, t, out_png):
         try:
             hh, ww = frame.shape[:2]
             for (x, y, sz, t0, t1) in parse_manual_faces(o.get("manual", "")):
-                if t0 - 0.05 <= t and (t1 is None or t <= t1 + 0.05):
+                if t0 - 0.05 <= t and t <= (t1 if t1 is not None else t0 + 3.0) + 0.05:
                     sd_ = sz / 100.0 * hh
                     if not any(abs(cx_ - x / 100.0 * ww) < sd_ * 0.6 and abs(cy_ - y / 100.0 * hh) < sd_ * 0.6 for (cx_, cy_, _s) in faces):
                         faces.append((x / 100.0 * ww, y / 100.0 * hh, sd_))
@@ -1870,7 +1873,7 @@ def faceblur_preview(o, src, t, out_png):
      O("emoji", "Emoji (when covering with an emoji)", "choice", "smile", emoji_names() or ["smile"]),
      O("sens", "Sensitivity", "choice", "Normal", list(FACE_SENS)),
      O("hold", "Keep covering after a face is lost (seconds)", "float", 0.5),
-     O("manual", "Extra covers for faces it misses (click the After picture to add)", "text", ""),
+     O("manual", "Extra covers for faces it misses (press on the After picture to add)", "text", ""),
      O("debug", "Draw green boxes where faces were found (to check)", "bool", False)],
     kind="video", tip="Hide faces with a blur, pixels, a black shape or an emoji.")
 def b_faceblur(o, c):
@@ -5913,27 +5916,86 @@ def gui():
             ttk.Radiobutton(vrow, text="Result", variable=view, value="result", command=set_view).pack(side="left", padx=10)
             ttk.Checkbutton(vrow, text="Keep the shape", variable=crop_ed["lock"]).pack(side="right")
             set_view()
-        # Face Blur: click the After picture to add an extra cover where a face was missed (written into the "Extra covers" box).
+        # Face Blur: press on a missed face in the After picture and drag outwards to set the size; the cover is written into the "Extra covers" box.
+        #  It follows that face while the detector sees it and holds its place for 3 seconds after (or until the end time, if one is given).
         if spec["id"] == "faceblur" and "manual" in tkvars and len(labels) > 1:
-            def add_manual_cover(ev):
-                try:
-                    img = labels[1].cget("image")
-                    if not img:
-                        return
-                    w_, h_ = labels[1].winfo_width(), labels[1].winfo_height()
-                    iw, ih = int(labels[1].tk.call("image", "width", img)), int(labels[1].tk.call("image", "height", img))
-                    x = (ev.x - (w_ - iw) / 2) / max(1, iw) * 100
-                    y = (ev.y - (h_ - ih) / 2) / max(1, ih) * 100
-                    if not (0 <= x <= 100 and 0 <= y <= 100):
-                        return
-                    tnow = (pos_var_ref["v"].get() * st.get("dur_", 0)) if pos_var_ref["v"] is not None else 0.0
-                    cur = tkvars["manual"].get().strip()
-                    tkvars["manual"].set((cur + "; " if cur else "") + f"{x:.0f} {y:.0f} 14 {tnow:.1f}")
-                except Exception as e:  # noqa: BLE001
-                    write_log(f"face blur click failed: {e!r}")
             pos_var_ref = {"v": None}
+            drag = {}
+
+            def pic_xy(ev):
+                img = labels[1].cget("image")
+                if not img:
+                    return None
+                w_, h_ = labels[1].winfo_width(), labels[1].winfo_height()
+                iw, ih = int(labels[1].tk.call("image", "width", img)), int(labels[1].tk.call("image", "height", img))
+                px, py = ev.x - (w_ - iw) / 2, ev.y - (h_ - ih) / 2
+                return px, py, iw, ih
+
+            def tnow():
+                return (pos_var_ref["v"].get() * st.get("dur_", 0)) if pos_var_ref["v"] is not None else 0.0
+
+            def cover_press(ev):
+                try:
+                    r = pic_xy(ev)
+                    if r and 0 <= r[0] <= r[2] and 0 <= r[1] <= r[3]:
+                        drag.update(x=r[0], y=r[1], iw=r[2], ih=r[3])
+                    else:
+                        drag.clear()
+                except Exception as e:  # noqa: BLE001
+                    write_log(f"face blur press failed: {e!r}")
+
+            def cover_drag(ev):
+                try:
+                    r = pic_xy(ev)
+                    if drag and r:
+                        d_ = math.hypot(r[0] - drag["x"], r[1] - drag["y"])
+                        note.configure(text=f"New cover: size {max(3, min(100, 2 * d_ / drag['ih'] * 100)):.0f}  (let go to add it)")
+                except Exception:  # noqa: BLE001
+                    pass
+
+            def cover_release(ev):
+                try:
+                    r = pic_xy(ev)
+                    if not drag or not r:
+                        return
+                    d_ = math.hypot(r[0] - drag["x"], r[1] - drag["y"])
+                    size = 14 if d_ < 6 else max(3, min(100, 2 * d_ / drag["ih"] * 100))
+                    x, y = drag["x"] / drag["iw"] * 100, drag["y"] / drag["ih"] * 100
+                    drag.clear()
+                    cur = tkvars["manual"].get().strip()
+                    tkvars["manual"].set((cur + "; " if cur else "") + f"{x:.0f} {y:.0f} {size:.0f} {tnow():.1f}")
+                except Exception as e:  # noqa: BLE001
+                    write_log(f"face blur release failed: {e!r}")
+
+            def edit_last(idx):
+                """Set the start (idx 3) or end (idx 4) of the last cover to the moment shown by the Preview-at slider."""
+                parts = [x.strip() for x in tkvars["manual"].get().split(";") if x.strip()]
+                if not parts:
+                    return
+                f = parts[-1].replace(",", " ").split()
+                while len(f) < 3:
+                    f.append("0")
+                f = f[:5]
+                while len(f) <= idx:
+                    f.append("0")
+                f[idx] = f"{tnow():.1f}"
+                parts[-1] = " ".join(f)
+                tkvars["manual"].set("; ".join(parts))
+
+            def remove_last():
+                parts = [x.strip() for x in tkvars["manual"].get().split(";") if x.strip()]
+                tkvars["manual"].set("; ".join(parts[:-1]))
             labels[1].configure(cursor="crosshair")
-            labels[1].bind("<Button-1>", add_manual_cover)
+            labels[1].bind("<ButtonPress-1>", cover_press)
+            labels[1].bind("<B1-Motion>", cover_drag)
+            labels[1].bind("<ButtonRelease-1>", cover_release)
+            ttk.Label(box, text="Missed a face? Press on it in the After picture and drag outwards to set the size.", style="Muted.TLabel", wraplength=dim["w"] + 10).pack(anchor="w")
+            mrow = ttk.Frame(box)
+            mrow.pack(fill="x", pady=(0, 4))
+            ttk.Button(mrow, text="Last cover starts here", command=lambda: edit_last(3)).pack(side="left", padx=(0, 4))
+            ttk.Button(mrow, text="ends here", command=lambda: edit_last(4)).pack(side="left", padx=(0, 4))
+            ttk.Button(mrow, text="Remove last", command=remove_last).pack(side="left", padx=(0, 4))
+            ttk.Button(mrow, text="Clear", command=lambda: tkvars["manual"].set("")).pack(side="left")
         # "Preview at": slide through the video to see the effect at any moment (Trim and the strip tools
         #  follow their handles instead).
         pos_var, pos_cb = None, {"f": None}
