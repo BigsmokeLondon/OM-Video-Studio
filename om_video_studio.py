@@ -1756,6 +1756,8 @@ def _faceblur_job(c, o, outp):
         pk_fr = [(x / 100.0 * W, y / 100.0 * H, sz / 100.0 * H, int(t0 * fps), (int(t1 * fps) if t1 is not None else None))
                  for (x, y, sz, t0, t1) in parse_manual_faces(o.get("picked", ""))]
         picks = PickSet(pk_fr, int(3 * fps))
+        if which != FACE_WHICH[0] and seeds:
+            log(f"Note: {len(seeds)} extra cover(s) in the 'Extra covers' box are always drawn, even in this mode. Press Clear covers if you do not want them.")
         if which != FACE_WHICH[0] and not pk_fr:
             log("You chose to pick faces, but none are picked yet: " + ("all faces will be covered." if which == FACE_WHICH[1] else "nothing will be covered."))
         dec = [FFMPEG, "-hide_banner", "-nostdin", "-loglevel", "error", "-i", c.src, "-an", "-sn", "-dn",
@@ -1899,13 +1901,14 @@ def faceblur_preview(o, src, t, out_png):
             if "net" not in _FB_NET:
                 _FB_NET["net"] = _face_net_load(np, cv2)
             faces = _face_detect(np, cv2, _FB_NET["net"], frame, FACE_SENS.get(o["sens"], 0.7))
+        extra_ = []  # hand-placed covers are always drawn, whatever "Which faces to cover" says (same as Run)
         try:
             hh, ww = frame.shape[:2]
             for (x, y, sz, t0, t1) in parse_manual_faces(o.get("manual", "")):
                 if t0 - 0.05 <= t and t <= (t1 if t1 is not None else t0 + 3.0) + 0.05:
                     sd_ = sz / 100.0 * hh
                     if not any(abs(cx_ - x / 100.0 * ww) < sd_ * 0.6 and abs(cy_ - y / 100.0 * hh) < sd_ * 0.6 for (cx_, cy_, _s) in faces):
-                        faces.append((x / 100.0 * ww, y / 100.0 * hh, sd_))
+                        extra_.append((x / 100.0 * ww, y / 100.0 * hh, sd_))
         except ValueError:
             pass
         which = o.get("faces") or FACE_WHICH[0]
@@ -1924,6 +1927,7 @@ def faceblur_preview(o, src, t, out_png):
             else:
                 kept = [f for f, h_ in zip(faces, hit) if not h_]
                 faces = [f for f, h_ in zip(faces, hit) if h_]
+        faces = faces + extra_
         for (cx, cy, sd) in kept:  # faces left uncovered: a thin green ring so you can see what the picks do
             cv2.circle(frame, (int(cx), int(cy)), int(sd * 0.6), (0, 200, 0), 2)
         for (cx, cy, sd) in faces:
