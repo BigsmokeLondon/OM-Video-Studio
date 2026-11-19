@@ -1513,6 +1513,15 @@ def _face_iou(a, b):
     return inter / (a[2] * a[2] + b[2] * b[2] - inter)
 
 
+def _face_ioa(a, b):
+    """Overlap as a share of the SMALLER of two squares (1.0 = one lies completely inside the other)."""
+    iw = min(a[0] + a[2] / 2, b[0] + b[2] / 2) - max(a[0] - a[2] / 2, b[0] - b[2] / 2)
+    ih = min(a[1] + a[2] / 2, b[1] + b[2] / 2) - max(a[1] - a[2] / 2, b[1] - b[2] / 2)
+    if iw <= 0 or ih <= 0:
+        return 0.0
+    return iw * ih / (min(a[2], b[2]) ** 2)
+
+
 class FaceTracker:
     """Follows every face seen recently. A detection moves the cover straight onto the face (no lag); between detections the cover keeps moving at the face's last speed; a face that is not found keeps being covered for `hold` frames and the cover grows a little each frame so it still hides a face that moved on."""
 
@@ -1554,8 +1563,12 @@ class FaceTracker:
         self.tracks.sort(key=lambda t: -t["last"])
         keep = []
         for t in self.tracks:
-            if all(_face_iou((t["x"], t["y"], t["s"]), (k["x"], k["y"], k["s"])) < 0.3 for k in keep) or t.get("pin", -1) >= fi:
+            dup = next((k for k in keep if _face_ioa((t["x"], t["y"], t["s"]), (k["x"], k["y"], k["s"])) >= 0.6), None)
+            if dup is None:
                 keep.append(t)
+            elif t.get("pin", -1) >= fi:  # a hand-placed cover on a face that is now also found: one cover, with the hand-placed lifetime
+                dup["pin"] = max(dup.get("pin", -1), t["pin"])
+                dup["pf"] = max(dup.get("pf", 0), t.get("pf", 0))
         self.tracks = keep
 
     def pin(self, x, y, s, until, follow=0):
