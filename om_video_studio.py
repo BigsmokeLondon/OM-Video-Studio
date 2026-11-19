@@ -1696,6 +1696,55 @@ def _faceblur_job(c, o, outp):
     return run
 
 
+_FB_NET = {}
+
+
+def faceblur_preview(o, src, t, out_png):
+    """One-picture preview for Face Blur: grab the frame at time t, find the faces in it and cover them. True on success."""
+    try:
+        import numpy as np
+        import cv2
+    except ImportError:
+        return False
+    tmp = tempfile.mkdtemp(prefix="ffprev_")
+    try:
+        fp = os.path.join(tmp, "f.png")
+        if not grab_frame(src, t, fp, box=None):
+            return False
+        frame = cv2.imdecode(np.fromfile(fp, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            return False
+        if "net" not in _FB_NET:
+            mp = FACE_DIR / "version-RFB-640.onnx"
+            try:
+                _FB_NET["net"] = cv2.dnn.readNetFromONNX(str(mp))
+            except Exception:  # noqa: BLE001
+                tx = os.path.join(tmp, mp.name)
+                shutil.copyfile(mp, tx)
+                _FB_NET["net"] = cv2.dnn.readNetFromONNX(tx)
+        emoji_img = None
+        if o["cover"] == "Emoji":
+            emoji_img = cv2.imdecode(np.fromfile(str(EMOJI_DIR / (o["emoji"] + ".png")), np.uint8), cv2.IMREAD_UNCHANGED)
+            if emoji_img is None or emoji_img.ndim < 3 or emoji_img.shape[2] != 4:
+                return False
+        grow = max(50, min(400, int(o["size"]))) / 100.0
+        cache = {}
+        for (cx, cy, sd) in _face_detect(np, cv2, _FB_NET["net"], frame, FACE_SENS.get(o["sens"], 0.7)):
+            _face_apply(np, cv2, frame, cx, cy, sd * grow, o, emoji_img, cache)
+            if o["debug"]:
+                h2 = int(sd / 2)
+                cv2.rectangle(frame, (int(cx - h2), int(cy - h2)), (int(cx + h2), int(cy + h2)), (0, 255, 0), 2)
+        ok, buf = cv2.imencode(".png", frame)
+        if not ok:
+            return False
+        buf.tofile(out_png)
+        return os.path.exists(out_png) and os.path.getsize(out_png) > 0
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 @op("Effects & Colour", "faceblur", "Face Blur",
     [O("shape", "Shape", "choice", "Circle", FACE_SHAPES),
      O("cover", "Cover faces with", "choice", "Blur", FACE_COVERS),
@@ -2249,6 +2298,8 @@ def png_size(path):
 # Render the 'after' picture for the live preview using the same filter the real job would use.
 def preview_frame(spec, opts, src, t, out_png):
     """Render ONE frame of what an operation would do (its real filters, no encoding) to a PNG. True on success."""
+    if spec["id"] == "faceblur":
+        return faceblur_preview(opts, src, t, out_png)
     tmp = tempfile.mkdtemp(prefix="ffprev_")
     try:
         c = Ctx(src, tmp, tmp)
