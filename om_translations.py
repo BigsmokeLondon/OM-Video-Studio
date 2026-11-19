@@ -18,6 +18,7 @@ LANGS = {'en': 'English',
 
 TR = {
     "ur": {
+        'Extra covers for faces it misses (click the After picture to add)': "چھوٹے ہوئے چہروں کے لیے اضافی کور (اضافہ کے لیے 'بعد' تصویر پر کلک کریں)",
         'Face Blur': 'چہرہ دھندلا کریں',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'چہروں کو دھندلا، پکسل، سیاہ شکل یا ایموجی سے چھپائیں۔',
         'Shape': 'شکل',
@@ -304,6 +305,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'براہ کرم پہلے ان پٹ فائل یا فولڈر منتخب کریں۔\n\nفائلیں براؤز کریں...، بیچ فولڈر...، استعمال کریں یا فائل کو اس ونڈو پر گھسیٹیں۔',
     },
     "bn": {
+        'Extra covers for faces it misses (click the After picture to add)': "যে মুখ ধরা পড়ে না তার জন্য বাড়তি কভার ('পরে' ছবিতে ক্লিক করে যোগ করুন)",
         'Face Blur': 'মুখ ঝাপসা করুন',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'ঝাপসা, পিক্সেল, কালো আকৃতি বা ইমোজি দিয়ে মুখ ঢেকে দিন।',
         'Shape': 'আকৃতি',
@@ -590,6 +592,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'অনুগ্রহ করে আগে একটি ইনপুট ফাইল বা ফোল্ডার বেছে নিন।\n\nফাইল ব্রাউজ করুন..., ব্যাচ ফোল্ডার... ব্যবহার করুন, অথবা এই উইন্ডোতে ফাইল টেনে আনুন।',
     },
     "ne": {
+        'Extra covers for faces it misses (click the After picture to add)': "नभेटिएका अनुहारका लागि थप कभर ('पछि' तस्बिरमा क्लिक गरेर थप्नुहोस्)",
         'Face Blur': 'अनुहार धमिलो पार्नुहोस्',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'धमिलो, पिक्सेल, कालो आकार वा इमोजीले अनुहार लुकाउनुहोस्।',
         'Shape': 'आकार',
@@ -876,6 +879,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'कृपया पहिले इनपुट फाइल वा फोल्डर छान्नुहोस्।\n\nफाइल ब्राउज गर्नुहोस्..., ब्याच फोल्डर... प्रयोग गर्नुहोस्, वा फाइल यो विन्डोमा तान्नुहोस्।',
     },
     "ar": {
+        'Extra covers for faces it misses (click the After picture to add)': 'أغطية إضافية للوجوه التي يفوتها (انقر على صورة «بعد» للإضافة)',
         'Face Blur': 'تمويه الوجوه',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'أخفِ الوجوه بتمويه أو بكسلة أو شكل أسود أو إيموجي.',
         'Shape': 'الشكل',
@@ -1162,6 +1166,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'يُرجى اختيار ملف أو مجلد الإدخال أولاً.\n\nاستخدم تصفّح الملفات...، أو مجلد الدفعة...، أو اسحب ملفاً إلى هذه النافذة.',
     },
     "ru": {
+        'Extra covers for faces it misses (click the After picture to add)': 'Дополнительные накладки для пропущенных лиц (нажмите на картинку «После», чтобы добавить)',
         'Face Blur': 'Размытие лиц',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'Скройте лица размытием, пикселями, чёрной фигурой или эмодзи.',
         'Shape': 'Форма',
@@ -1448,6 +1453,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Сначала выберите входной файл или папку.\n\nИспользуйте «Выбрать файлы...», «Папка для пакета...» или перетащите файл в это окно.',
     },
     "hi": {
+        'Extra covers for faces it misses (click the After picture to add)': "छूटे हुए चेहरों के लिए अतिरिक्त कवर (जोड़ने के लिए 'बाद' तस्वीर पर क्लिक करें)",
         'Face Blur': 'चेहरा धुंधला करें',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'चेहरों को धुंधला, पिक्सेल, काली आकृति या इमोजी से छिपाएँ।',
         'Shape': 'आकार',
@@ -1734,6 +1740,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'कृपया पहले इनपुट फ़ाइल या फ़ोल्डर चुनें।\n\nफ़ाइलें ब्राउज़ करें..., बैच फ़ोल्डर... का उपयोग करें, या फ़ाइल को इस विंडो पर खींचकर छोड़ें।',
     },
     "pa": {
+        'Extra covers for faces it misses (click the After picture to add)': "ਛੁੱਟੇ ਚਿਹਰਿਆਂ ਲਈ ਵਾਧੂ ਕਵਰ (ਜੋੜਨ ਲਈ 'ਬਾਅਦ' ਤਸਵੀਰ 'ਤੇ ਕਲਿੱਕ ਕਰੋ)",
         'Face Blur': 'ਚਿਹਰਾ ਧੁੰਦਲਾ ਕਰੋ',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'ਚਿਹਰਿਆਂ ਨੂੰ ਧੁੰਦਲਾ, ਪਿਕਸਲ, ਕਾਲੀ ਸ਼ਕਲ ਜਾਂ ਇਮੋਜੀ ਨਾਲ ਲੁਕਾਓ।',
         'Shape': 'ਸ਼ਕਲ',
@@ -2020,6 +2027,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'ਕਿਰਪਾ ਕਰਕੇ ਪਹਿਲਾਂ ਇਨਪੁੱਟ ਫ਼ਾਈਲ ਜਾਂ ਫ਼ੋਲਡਰ ਚੁਣੋ।\n\nਫ਼ਾਈਲਾਂ ਬ੍ਰਾਊਜ਼ ਕਰੋ..., ਬੈਚ ਫ਼ੋਲਡਰ... ਵਰਤੋ, ਜਾਂ ਫ਼ਾਈਲ ਨੂੰ ਇਸ ਵਿੰਡੋ ਉੱਤੇ ਖਿੱਚ ਕੇ ਛੱਡੋ।',
     },
     "es": {
+        'Extra covers for faces it misses (click the After picture to add)': 'Cubiertas extra para las caras que no detecta (haz clic en la imagen «Después» para añadir)',
         'Face Blur': 'Desenfocar caras',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'Oculta las caras con desenfoque, píxeles, una forma negra o un emoji.',
         'Shape': 'Forma',
@@ -2306,6 +2314,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Primero selecciona un archivo o una carpeta de entrada.\n\nUsa Examinar archivos..., Carpeta por lotes... o arrastra un archivo a esta ventana.',
     },
     "fr": {
+        'Extra covers for faces it misses (click the After picture to add)': "Caches supplémentaires pour les visages manqués (cliquez sur l'image « Après » pour en ajouter)",
         'Face Blur': 'Flouter les visages',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'Cachez les visages avec un flou, des pixels, une forme noire ou un emoji.',
         'Shape': 'Forme',
@@ -2592,6 +2601,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': "Veuillez d'abord choisir un fichier ou un dossier d'entrée.\n\nUtilisez Parcourir les fichiers..., Dossier en lot... ou faites glisser un fichier sur cette fenêtre.",
     },
     "de": {
+        'Extra covers for faces it misses (click the After picture to add)': 'Zusätzliche Abdeckungen für verpasste Gesichter (zum Hinzufügen auf das Bild „Danach“ klicken)',
         'Face Blur': 'Gesichter verpixeln',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'Gesichter mit Unschärfe, Pixeln, einer schwarzen Form oder einem Emoji verbergen.',
         'Shape': 'Form',
@@ -2878,6 +2888,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Bitte wähle zuerst eine Eingabedatei oder einen Ordner aus.\n\nNutze Dateien durchsuchen..., Stapelordner... oder ziehe eine Datei auf dieses Fenster.',
     },
     "pt": {
+        'Extra covers for faces it misses (click the After picture to add)': 'Coberturas extra para rostos não detetados (clique na imagem «Depois» para adicionar)',
         'Face Blur': 'Desfocar rostos',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'Esconda rostos com desfoque, pixels, uma forma preta ou um emoji.',
         'Shape': 'Forma',
@@ -3164,6 +3175,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Selecione primeiro um ficheiro ou uma pasta de entrada.\n\nUse Procurar ficheiros..., Pasta em lote... ou arraste um ficheiro para esta janela.',
     },
     "it": {
+        'Extra covers for faces it misses (click the After picture to add)': "Coperture extra per i volti non rilevati (clicca sull'immagine «Dopo» per aggiungere)",
         'Face Blur': 'Sfoca volti',
         'Hide faces with a blur, pixels, a black shape or an emoji.': "Nascondi i volti con sfocatura, pixel, una forma nera o un'emoji.",
         'Shape': 'Forma',
@@ -3450,6 +3462,7 @@ TR = {
         'Please select an input file or folder first.\n\nUse Browse files..., Batch folder..., or drag a file onto this window.': 'Seleziona prima un file o una cartella di ingresso.\n\nUsa Sfoglia file..., Cartella batch... oppure trascina un file in questa finestra.',
     },
     "tr": {
+        'Extra covers for faces it misses (click the After picture to add)': 'Kaçırılan yüzler için ek örtüler (eklemek için «Sonra» resmine tıklayın)',
         'Face Blur': 'Yüzleri bulanıklaştır',
         'Hide faces with a blur, pixels, a black shape or an emoji.': 'Yüzleri bulanıklık, piksel, siyah şekil veya emoji ile gizleyin.',
         'Shape': 'Şekil',
