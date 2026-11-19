@@ -1548,6 +1548,13 @@ class FaceTracker:
             if i not in used:
                 self.tracks.append(dict(x=d[0], y=d[1], s=d[2], vx=0.0, vy=0.0, last=fi))
         self.tracks = [t for t in self.tracks if fi - t["last"] <= self.hold or t.get("pin", -1) >= fi]
+        # two tracks on one face (an old one still being held plus a new one): keep the newer
+        self.tracks.sort(key=lambda t: -t["last"])
+        keep = []
+        for t in self.tracks:
+            if all(_face_iou((t["x"], t["y"], t["s"]), (k["x"], k["y"], k["s"])) < 0.3 for k in keep) or t.get("pin", -1) >= fi:
+                keep.append(t)
+        self.tracks = keep
 
     def pin(self, x, y, s, until):
         """A cover placed by hand: stays where it was put until frame `until`, and follows a detected face that comes into it."""
