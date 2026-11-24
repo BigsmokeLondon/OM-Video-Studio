@@ -6363,7 +6363,7 @@ def gui():
         cv = tk.Canvas(hold, highlightthickness=0, bd=0, bg="#101010", cursor="fleur")
         cv.place(x=0, y=0, relwidth=1, relheight=1)
         S = {"img": None, "ox": 0, "oy": 0, "drag": None, "sel": None, "tdrag": None, "busy": False}
-        TL_H, PADL, PADR, TOL = 110, 50, 14, 0.05
+        TL_H, PADL, PADR, TOL = 110, 62, 16, 0.05
         ZY, PY = (24, 62), (66, 104)
         BLUE = "#4fc3f7"
         tl = tk.Canvas(box, width=dim["w"], height=TL_H, highlightthickness=0, bd=0, bg="#151515")
@@ -6715,7 +6715,7 @@ def gui():
             put(*ls)
         ease_cb.bind("<<ComboboxSelected>>", edit_ease)
         for ent in (a_ent, b_ent):
-            ent.bind("<Return>", edit_vals)
+            ent.bind("<Return>", lambda e: (edit_vals(), "break")[1])  # Enter applies the value; it must not also press Run
             ent.bind("<FocusOut>", edit_vals)
 
         def refresh_controls():
