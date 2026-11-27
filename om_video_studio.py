@@ -5365,6 +5365,7 @@ def gui():
                 t = max(t, s_ + 0.1)
                 tkvars[KB].set("" if (cfg["blank"] and t >= S["dur"] - 0.05) else FMT[cfg["fb"]](t if cfg["blank"] else min(t, S["dur"] - 0.1)))
         if MORE:
+            ttk.Label(box, text="Green = kept sections   |   Gold = the section you are editing (kept)   |   Dark red = CUT out", style="Muted.TLabel", wraplength=pw).pack(anchor="w", pady=(0, 4))
             ttk.Button(brow2, text="+ Keep another section", command=lambda: add_section()).pack(side="left", padx=(6, 0))
             ttk.Button(brow2, text="Remove this section", command=lambda: remove_section()).pack(side="left", padx=(6, 0))
         if not WINDOW:
@@ -5549,20 +5550,37 @@ def gui():
             xs, xe = x_of(s_), x_of(e_)
             lo_, hi_ = PAD, PAD + S["sw"]
             cs, ce = min(max(xs, lo_), hi_), min(max(xe, lo_), hi_)
-            cv.create_rectangle(lo_, RULER, cs, h_, fill="#000000", stipple="gray50", width=0)
-            cv.create_rectangle(ce, RULER, hi_, h_, fill="#000000", stipple="gray50", width=0)
+            ex = extras()
+            if ex:  # several sections: everything NOT kept is dimmed hard and marked CUT, kept parts get a green frame
+                kept = merge_ranges(ex + [(s_, e_)])
+                gaps, prev = [], 0.0
+                for a_, b_ in kept:
+                    if a_ > prev:
+                        gaps.append((prev, a_))
+                    prev = max(prev, b_)
+                if prev < d:
+                    gaps.append((prev, d))
+                for a_, b_ in gaps:
+                    xa, xb = min(max(x_of(a_), lo_), hi_), min(max(x_of(b_), lo_), hi_)
+                    if xb - xa < 1:
+                        continue
+                    cv.create_rectangle(xa, RULER, xb, h_, fill="#000000", stipple="gray75", outline="#ef4444", width=1)
+                    if xb - xa > 34:
+                        cv.create_text((xa + xb) / 2, RULER + S["th"] / 2, text="CUT", fill="#fca5a5", font=f_base)
+                for k_, (a_, b_) in enumerate(ex):
+                    xa, xb = min(max(x_of(a_), lo_), hi_), min(max(x_of(b_), lo_), hi_)
+                    cv.create_rectangle(xa, RULER, xb, h_, outline="#22c55e", width=3)
+                    if xb - xa > 18:
+                        cv.create_text(xa + 5, RULER + 3, text=str(k_ + 1), anchor="nw", fill="#86efac", font=f_base)
+            else:
+                cv.create_rectangle(lo_, RULER, cs, h_, fill="#000000", stipple="gray50", width=0)
+                cv.create_rectangle(ce, RULER, hi_, h_, fill="#000000", stipple="gray50", width=0)
             cv.create_rectangle(cs, RULER, ce, h_, outline=BRAND_GOLD, width=2)
             for x, side in ((xs, -1), (xe, 1)):
                 x = min(max(x, lo_ + 8), hi_ - 8)  # a handle beyond the zoomed view is shown at the edge so it can still be grabbed
                 x0, x1 = (x - 8, x) if side < 0 else (x, x + 8)
                 cv.create_rectangle(x0, RULER - 2, x1, h_ + 2, fill=BRAND_GOLD, outline=BRAND_GOLD)
                 cv.create_line(x0 + 4, RULER + 10, x0 + 4, h_ - 8, fill="#5a4300")
-            ex = extras()
-            for k_, (a_, b_) in enumerate(ex):
-                xa, xb = min(max(x_of(a_), lo_), hi_), min(max(x_of(b_), lo_), hi_)
-                cv.create_rectangle(xa, RULER, xb, h_, fill="#5aa2ff", stipple="gray25", outline="#5aa2ff", width=2)
-                if xb - xa > 18:
-                    cv.create_text(xa + 5, RULER + 3, text=str(k_ + 1), anchor="nw", fill="#ffffff", font=f_base)
             # length of the selection (the delta between the two handles), centred at the top of the box
             txt = "Length " + fmt_ms(max(0.0, e_ - s_))
             if ex:
