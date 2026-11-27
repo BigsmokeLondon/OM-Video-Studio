@@ -5398,7 +5398,31 @@ def gui():
                 q_.put(("call", done))
             threading.Thread(target=build, daemon=True).start()
 
-        brow = ttk.Frame(box)
+        if MORE:  # buttons on the left; the colour key, shortcuts and section list on the right when the window is wide enough (else underneath)
+            low = ttk.Frame(box)
+            low.pack(fill="x")
+            lowl, lowr = ttk.Frame(low), ttk.Frame(low)
+            lowl.grid(row=0, column=0, sticky="nw")
+            lowr.grid(row=1, column=0, sticky="ew", pady=(8, 0))  # starts underneath so the window does not grow wider; moves right when there is room
+            low.columnconfigure(1, weight=1)
+            side = {"on": False}
+
+            def relayout(_e=None):
+                try:
+                    wide = top_.winfo_width() >= lowl.winfo_reqwidth() + 520
+                    if wide != side["on"]:
+                        side["on"] = wide
+                        if wide:
+                            lowr.grid_configure(row=0, column=1, sticky="nsew", padx=(24, 0), pady=0)
+                        else:
+                            lowr.grid_configure(row=1, column=0, sticky="ew", padx=0, pady=(8, 0))
+                except tk.TclError:
+                    pass
+            top_.bind("<Configure>", relayout, add="+")
+            top_.after(400, relayout)
+        else:
+            lowl = lowr = box
+        brow = ttk.Frame(lowl)
         brow.pack(fill="x", pady=(0, 6))
         ttk.Button(brow, text="▶  Play selection (with sound)", command=play_sel).pack(side="left")
         ttk.Button(brow, text="■  Stop", command=stop_play).pack(side="left", padx=(6, 0))
@@ -5414,7 +5438,7 @@ def gui():
             elif play.get("hold") is not None:
                 play_sel(start=play["hold"])
 
-        brow2 = ttk.Frame(box)
+        brow2 = ttk.Frame(lowl)
         brow2.pack(fill="x", pady=(0, 6))
         pbtn = ttk.Button(brow2, text="⏸  Pause", command=pause_or_resume)
         pbtn.pack(side="left")
@@ -5433,17 +5457,17 @@ def gui():
             ttk.Button(brow2, text="+ Keep another section", command=lambda: add_section()).pack(side="left", padx=(6, 0))
             ttk.Button(brow2, text="Remove this section", command=lambda: remove_section()).pack(side="left", padx=(6, 0))
             ttk.Button(brow2, text="Invert (cut these, keep the rest)", command=lambda: invert()).pack(side="left", padx=(6, 0))
-            brow3 = ttk.Frame(box)
+            brow3 = ttk.Frame(lowl)
             brow3.pack(fill="x", pady=(0, 6))
             ttk.Button(brow3, text="↶ Undo", command=lambda: undo()).pack(side="left")
             ttk.Button(brow3, text="↷ Redo", command=lambda: redo()).pack(side="left", padx=(6, 0))
             abtn = ttk.Button(brow3, text="▶  Preview all kept sections", command=lambda: play_all())
             abtn.pack(side="left", padx=(6, 0))
-            ttk.Label(box, text="Green = kept sections   |   Gold = the section you are editing (kept)   |   Red = CUT out", style="Muted.TLabel", wraplength=pw).pack(anchor="w", pady=(0, 2))
-            ttk.Label(box, text="Keys: Space play/pause  |  I / O = start / end at the pointer (or the paused marker)  |  N = keep another section  |  ← / → = nudge the last handle one frame (Shift = 1 s)  |  Ctrl+Z / Ctrl+Y = undo / redo",
-                      style="Muted.TLabel", wraplength=pw).pack(anchor="w", pady=(0, 4))
-            slist = ttk.Treeview(box, columns=("n", "start", "end", "len"), show="headings", height=4, selectmode="browse")
-            for col_, txt_, w_ in (("n", "#", 40), ("start", "Start", 120), ("end", "End", 120), ("len", "Length", 120)):
+            ttk.Label(lowr, text="Green = kept sections   |   Gold = the section you are editing (kept)   |   Red = CUT out", style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(0, 2))
+            ttk.Label(lowr, text="Keys: Space play/pause  |  I / O = start / end at the pointer (or the paused marker)  |  N = keep another section  |  ← / → = nudge the last handle one frame (Shift = 1 s)  |  Ctrl+Z / Ctrl+Y = undo / redo",
+                      style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(0, 4))
+            slist = ttk.Treeview(lowr, columns=("n", "start", "end", "len"), show="headings", height=6, selectmode="browse")
+            for col_, txt_, w_ in (("n", "#", 36), ("start", "Start", 110), ("end", "End", 110), ("len", "Length", 150)):
                 slist.heading(col_, text=txt_)
                 slist.column(col_, width=w_, anchor="w")
             slist.pack(fill="x", pady=(0, 4))
