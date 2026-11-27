@@ -5551,7 +5551,7 @@ def gui():
             lo_, hi_ = PAD, PAD + S["sw"]
             cs, ce = min(max(xs, lo_), hi_), min(max(xe, lo_), hi_)
             ex = extras()
-            if ex:  # several sections: everything NOT kept is dimmed hard and marked CUT, kept parts get a green frame
+            if MORE:  # Trim: everything NOT kept is dimmed hard and marked CUT, kept parts get a green frame
                 kept = merge_ranges(ex + [(s_, e_)])
                 gaps, prev = [], 0.0
                 for a_, b_ in kept:
