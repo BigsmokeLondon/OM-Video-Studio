@@ -11,6 +11,8 @@ Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, t
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
 
+**New in 1.21.0:** **Trim keeps several sections.** Mark more than one part of a video on the film strip and they are cut out and joined in order.
+
 **New in 1.20.0:** **Face Blur (photo).** Cover faces in a photo with a circle or square: blur, pixelate, black or an emoji. Add covers by hand for missed faces, or pick which faces to cover. 72 tools.
 
 **New in 1.19.0:** **Face Blur.** A new tool that finds faces and covers them with a circle or square that follows them: blur, pixelate, black or an emoji. Preview in the editor, add extra covers by hand for missed faces, or pick which faces to cover. Also: clearer Trim descriptions and a fix for "Normal size" after "Fill screen". 71 tools.

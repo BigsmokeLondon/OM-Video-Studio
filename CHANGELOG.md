@@ -2,6 +2,10 @@
 
 All notable changes to O.M. Video Studio. Newest first. Downloads for every version are on the [releases page](https://github.com/BigsmokeLondon/OM-Video-Studio/releases).
 
+## 1.21.0 - 2026-11-27
+
+**Trim can keep several sections.** In Trim / cut, press "Keep another section" to mark more parts of the same video; they show as blue bands on the film strip, click one to edit it, and "Remove this section" drops the one you are editing. When you run it the kept sections are cut out and joined in time order (overlapping ones are merged). You can also type them in "More sections to keep", like 1:00-1:30; 2:00-2:20. Several sections are always re-encoded.
+
 ## 1.20.0 - 2026-11-19
 
 **New tool: Face Blur (photo).** The same face finder and covers as Face Blur, for single pictures (JPG, PNG, WebP, BMP, TIFF). Cover faces with a circle or square in blur, pixelate, black or an emoji, add covers by hand by pressing and dragging on the After picture, and choose all faces, all except the ones you pick, or only the ones you pick. The result is saved next to the original in the same format. Phone photos that are turned (EXIF) come out the right way up. As with video, no detector finds every face, so check the result; black is the safest cover. 72 tools in total.
