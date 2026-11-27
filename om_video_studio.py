@@ -2580,7 +2580,7 @@ SCRUB_BOX = (280, 158)
 #  and b the LENGTH (Make a GIF); fa / fb = how a value is written into the box ("ms" = 001:22:400 like the
 #  sliders use, "num" = plain seconds); blank = an empty end box means "until the end of the file".
 STRIP_OPS = {
-    "trim": dict(a="start", b="end", mode="range", fa="ms", fb="ms", blank=True),
+    "trim": dict(a="start", b="end", mode="range", fa="ms", fb="ms", blank=True, bottom=True),
     "atrim": dict(a="start", b="end", mode="range", fa="ms", fb="ms", blank=True, audio=True),
     "drawtext": dict(a="start", b="end", mode="range", fa="ms", fb="ms", blank=True),
     "ramp": dict(a="s", b="e", mode="range", fa="num", fb="num", blank=False),
@@ -5279,8 +5279,14 @@ def gui():
         RULER = f_base.metrics("linespace") + 8  # the time labels use the same font as the "Clip length" line
         max_labels = max(4, int((pw - 2 * PAD) / (f_base.measure("0:00:00") + 22)))
         S = {"img": None, "dur": 0.0, "sw": pw - 2 * PAD, "th": TH0, "msg": "Building film strip…", "drag": None, "prev": (None, None)}
-        cv = tk.Canvas(box, width=pw, height=RULER + TH0 + 6, highlightthickness=0, bg=pal()["log_bg"], cursor="hand2")
-        cv.pack(pady=(0, 6))
+        BOTTOM = bool(cfg.get("bottom"))  # the strip sits under the whole dialog: the holder asks for no width, so it never widens the window
+        holder = None
+        if BOTTOM:
+            holder = ttk.Frame(box, width=10, height=RULER + TH0 + 6)
+            holder.pack(fill="x", pady=(0, 6))
+            holder.pack_propagate(False)
+        cv = tk.Canvas(holder or box, width=pw, height=RULER + TH0 + 6, highlightthickness=0, bg=pal()["log_bg"], cursor="hand2")
+        cv.pack(pady=(0, 6), anchor="w") if BOTTOM else cv.pack(pady=(0, 6))
 
         # Play selection: opens ffplay in its own window with sound, playing only the part between
         #  the two handles. (tkinter has no built-in video player, so this is the closest thing.)
@@ -5729,6 +5735,8 @@ def gui():
                 S.update(dur=dur, sw=sw, th=sh)
                 S["prev"] = times()
                 cv.configure(width=sw + 2 * PAD, height=RULER + sh + 6)
+                if holder is not None:
+                    holder.configure(height=RULER + sh + 12)
             redraw()
 
         def work():
@@ -6187,6 +6195,10 @@ def gui():
         src = cur_src({"files": getters["files"]()} if "files" in getters else None)
         box = ttk.LabelFrame(frm, text="Live preview", padding=8)
         box.grid(row=0, column=3, rowspan=max(nrows, 4), sticky="n", padx=(18, 0))
+        sbox = None
+        if spec["id"] == "trim":  # Trim: the film strip goes along the bottom of the dialog, full width
+            sbox = ttk.LabelFrame(frm, text="Film strip: keep / cut", padding=8)
+            sbox.grid(row=nrows + 1, column=0, columnspan=4, sticky="ew", pady=(12, 0))
         if spec["id"] == "atrim":  # audio file: no pictures, just the waveform with its two handles
             box.configure(text="Selection")
             ast = {"n": 0, "after": None, "imgs": [], "focus": "start"}
@@ -6417,7 +6429,7 @@ def gui():
                 write_log(f"clip timeline setup failed: {e!r}")
         if strip_cfg and strip_cfg["a"] in tkvars and strip_cfg["b"] in tkvars:
             try:
-                attach_strip(top_, box, tkvars, cur_src, st, q, dim["w"], strip_cfg)
+                attach_strip(top_, sbox or box, tkvars, cur_src, st, q, 900 if sbox else dim["w"], strip_cfg)
             except Exception as e:  # noqa: BLE001
                 write_log(f"film strip setup failed: {e!r}")
         note = ttk.Label(box, text="", style="Muted.TLabel", wraplength=dim["w"] + 10)
@@ -6559,6 +6571,11 @@ def gui():
             if not top_.winfo_exists():
                 return
             # how much bigger the window is than the size its contents ask for = room to give to the preview
+            if sbox is not None and st.get("resize_strip"):  # the strip follows the window width
+                sw_ = max(560, top_.winfo_width() - 60)
+                if abs(sw_ - rz.get("sw", 0)) > 8:
+                    rz["sw"] = sw_
+                    st["resize_strip"](sw_, 70)
             nw = max(base_w, dim["w"] + top_.winfo_width() - top_.winfo_reqwidth())
             nh = max(base_h, dim["h"] + (top_.winfo_height() - top_.winfo_reqheight()) // max(1, len(holds)))  # extra height is shared between the pictures
             if abs(nw - dim["w"]) < 8 and abs(nh - dim["h"]) < 8:
@@ -6567,7 +6584,7 @@ def gui():
             for h_ in holds:
                 h_.configure(width=nw, height=nh)
             note.configure(wraplength=nw + 10)
-            if st.get("resize_strip"):
+            if st.get("resize_strip") and sbox is None:
                 st["resize_strip"](nw)
             if st.get("resize_tl"):
                 st["resize_tl"](nw)
