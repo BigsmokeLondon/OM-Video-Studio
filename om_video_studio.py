@@ -65,7 +65,7 @@ from pathlib import Path
 #  *_EXT sets: decide which files the "kind" checker accepts for each operation
 #  and which extensions the file pickers show.
 APP = "O.M. Video Studio"
-VERSION = "1.20.0"
+VERSION = "1.21.0"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 # Contact form in the About window: messages are delivered by Formspree (its own form, separate from the Punjab & Kashmir Explorer).
 # Put the form's address here, e.g. "https://formspree.io/f/xxxxxxxx". While it is empty, Send explains that and Copy message still works.
@@ -495,17 +495,75 @@ def op(cat, id, label, opts=(), kind="video", tip="", folder_one=False):
 #  ======================= CATEGORY: VIDEO =======================
 # =========================================================================== VIDEO
 # Trim: -ss + -t. 'Re-encode' gives an exact cut, 'Copy' is instant but snaps to keyframes. Has live start/end frame preview sliders.
+# "More sections" lets you keep several ranges of the same video ("10-20; 1:00-1:30"); they are cut out and joined in order.
+def parse_ranges(text, dur):
+    """'10-20; 1:00-1:30; 2:00-' -> [(10.0, 20.0), (60.0, 90.0), (120.0, dur)]. Raises ValueError on bad input."""
+    out = []
+    for part in str(text or "").replace("\n", ";").split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" not in part:
+            raise ValueError(f"Section '{part}' needs a start and an end, like 10-20.")
+        a, b = part.split("-", 1)
+        s0 = tsec(a)
+        e0 = tsec(b) if b.strip() else dur
+        if e0 <= s0:
+            raise ValueError(f"Section '{part}' ends before it starts.")
+        out.append((s0, e0))
+    return out
+
+
+def merge_ranges(rngs):
+    """Sort sections by start time and merge any that overlap or touch, so one clip is never repeated."""
+    out = []
+    for a, b in sorted(rngs):
+        if out and a <= out[-1][1] + 1e-6:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
+def multi_filter(rngs, has_a, small=False):
+    """filter_complex that cuts every (start, end) out of input 0 and joins them in order. small=True scales to 360p (quick preview)."""
+    n = len(rngs)
+    fc = []
+    for i, (a, b) in enumerate(rngs):
+        fc.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{i}]")
+        if has_a:
+            fc.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{i}]")
+    if has_a:
+        fc.append("".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]")
+        maps, au = ["-map", "[v]", "-map", "[a]"], AAC
+    else:
+        fc.append("".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[v]")
+        maps, au = ["-map", "[v]"], []
+    if small:
+        fc.append("[v]scale=-2:360[vs]")
+        maps[1] = "[vs]"
+    return ";".join(fc), maps, au
+
+
 @op("Video", "trim", "Trim / cut by time",
     [O("start", "Start (hh:mm:ss or seconds)", default="0"), O("end", "End (blank = to the end)", default=""),
+     O("more", "More sections to keep (start-end; start-end)", default=""),
      O("mode", "Mode", "choice", "Re-encode (exact cut)", ["Re-encode (exact cut)", "Copy (instant, cuts on keyframes)"])],
-    tip="Cut out one section of the video.")
+    tip="Cut out one section of the video, or keep several: put the first in Start/End and add more as 1:00-1:30; 2:00-2:20. Sections are joined in order.")
 def b_trim(o, c):
     s = tsec(o["start"])
     e = tsec(o["end"]) if o["end"] else c.dur
-    d = max(0.1, e - s)
-    if o["mode"].startswith("Copy"):
-        return [job(["-ss", f"{s}", "-i", c.src, "-t", f"{d}", "-c", "copy", "-avoid_negative_ts", "make_zero"], c.out("_trim"), d)]
-    return [job(["-ss", f"{s}", "-i", c.src, "-t", f"{d}"] + vcodec() + AAC, c.out("_trim", ".mp4"), d)]
+    more = parse_ranges(o.get("more", ""), c.dur)
+    rngs = merge_ranges([(s, max(e, s + 0.1))] + more) if more else [(s, e)]
+    if len(rngs) == 1:
+        s, e = rngs[0]
+        d = max(0.1, e - s)
+        if o["mode"].startswith("Copy"):
+            return [job(["-ss", f"{s}", "-i", c.src, "-t", f"{d}", "-c", "copy", "-avoid_negative_ts", "make_zero"], c.out("_trim"), d)]
+        return [job(["-ss", f"{s}", "-i", c.src, "-t", f"{d}"] + vcodec() + AAC, c.out("_trim", ".mp4"), d)]
+    total = sum(b - a for a, b in rngs)
+    fc, maps, au = multi_filter(rngs, c.has_a)
+    return [job(["-i", c.src, "-filter_complex", fc] + maps + vcodec() + au, c.out("_trim", ".mp4"), total)]
 
 
 # Join: concat filter over the selected file plus the extra clips; every clip is scaled/padded to the first clip's size, 30 fps, stereo 48 kHz, then re-encoded.
@@ -2531,7 +2589,7 @@ SCRUB_BOX = (280, 158)
 #  and b the LENGTH (Make a GIF); fa / fb = how a value is written into the box ("ms" = 001:22:400 like the
 #  sliders use, "num" = plain seconds); blank = an empty end box means "until the end of the file".
 STRIP_OPS = {
-    "trim": dict(a="start", b="end", mode="range", fa="ms", fb="ms", blank=True),
+    "trim": dict(a="start", b="end", mode="range", fa="ms", fb="ms", blank=True, bottom=True),
     "atrim": dict(a="start", b="end", mode="range", fa="ms", fb="ms", blank=True, audio=True),
     "drawtext": dict(a="start", b="end", mode="range", fa="ms", fb="ms", blank=True),
     "ramp": dict(a="s", b="e", mode="range", fa="num", fb="num", blank=False),
@@ -3117,7 +3175,7 @@ def ff_version():
 # One plain-English description per tool (shown in the About window and in docs/ABOUT.md). Keys are the tool ids.
 TOOL_DOCS = {
     # ---- Video
-    "trim": "Cut one section out of a video. Type a start and end time (hh:mm:ss or plain seconds); leave End blank to go to the end. 'Re-encode' gives a frame-exact cut, 'Copy' is instant but cuts on the nearest keyframe. A film strip with draggable handles, a live preview and a Play selection button help you find the exact moment. Fill screen (or F11) makes the window as big as your screen.",
+    "trim": "Cut one section out of a video, or keep several and join them: press 'Keep another section' on the film strip (or type them in 'More sections', like 1:00-1:30; 2:00-2:20). Kept parts show green and cut parts red; click a green band or a row in the section list to edit it. Invert swaps kept and cut, Undo/Redo (Ctrl+Z / Ctrl+Y) steps back, Space plays, I / O set the start / end, N adds a section, and 'Preview all kept sections' plays the joined result. Sections are joined in time order (always re-encoded). Type a start and end time (hh:mm:ss or plain seconds); leave End blank to go to the end. 'Re-encode' gives a frame-exact cut, 'Copy' is instant but cuts on the nearest keyframe. A film strip with draggable handles, a live preview and a Play selection button help you find the exact moment. Fill screen (or F11) makes the window as big as your screen.",
     "join": "Join several clips into one video, in the order listed. Leave the Input box empty and add all your clips (or a whole folder) in the dialog, or pick a first clip and append the rest. A clip timeline lets you reorder them; everything is scaled to the first clip's size.",
     "split": "Cut a long video into equal-length parts, for example 59 seconds each for Shorts and Reels. Choose 'Re-encode' for exact lengths or 'Copy' for a fast cut on keyframes.",
     "speed": "Slow motion or time-lapse for the whole clip. 0.5 is half speed, 2 is twice as fast. The sound is speeded or slowed to match, without changing its pitch.",
@@ -5221,6 +5279,8 @@ def gui():
     def attach_strip(top_, box, tkvars, cur_src, st, q_, pw, cfg=None):
         cfg = cfg or STRIP_OPS["trim"]
         KA, KB, WINDOW = cfg["a"], cfg["b"], cfg["mode"] == "window"
+        MORE = cfg["mode"] == "range" and "more" in tkvars  # Trim: several kept sections
+        XTRA = (f_base.metrics("linespace") + 10) if MORE else 0  # room under the strip for the length counter
 
         def num(t):
             return (f"{max(0.0, t):.3f}".rstrip("0").rstrip(".")) or "0"
@@ -5229,8 +5289,14 @@ def gui():
         RULER = f_base.metrics("linespace") + 8  # the time labels use the same font as the "Clip length" line
         max_labels = max(4, int((pw - 2 * PAD) / (f_base.measure("0:00:00") + 22)))
         S = {"img": None, "dur": 0.0, "sw": pw - 2 * PAD, "th": TH0, "msg": "Building film strip…", "drag": None, "prev": (None, None)}
-        cv = tk.Canvas(box, width=pw, height=RULER + TH0 + 6, highlightthickness=0, bg=pal()["log_bg"], cursor="hand2")
-        cv.pack(pady=(0, 6))
+        BOTTOM = bool(cfg.get("bottom"))  # the strip sits under the whole dialog: the holder asks for no width, so it never widens the window
+        holder = None
+        if BOTTOM:
+            holder = ttk.Frame(box, width=10, height=RULER + TH0 + 6 + XTRA)
+            holder.pack(fill="x", pady=(0, 6))
+            holder.pack_propagate(False)
+        cv = tk.Canvas(holder or box, width=pw, height=RULER + TH0 + 6 + XTRA, highlightthickness=0, bg=pal()["log_bg"], cursor="hand2")
+        cv.pack(pady=(0, 6), anchor="w") if BOTTOM else cv.pack(pady=(0, 6))
 
         # Play selection: opens ffplay in its own window with sound, playing only the part between
         #  the two handles. (tkinter has no built-in video player, so this is the closest thing.)
@@ -5255,6 +5321,13 @@ def gui():
                     p_.terminate()
                 except OSError:
                     pass
+            if not keep:
+                ap_ = play.pop("all", None)
+                if ap_ is not None and ap_.poll() is None:
+                    try:
+                        ap_.terminate()
+                    except OSError:
+                        pass
 
         def play_sel(start=None):
             stop_play()
@@ -5283,7 +5356,73 @@ def gui():
                 tick()
             except OSError as e:
                 messagebox.showinfo(APP, f"Couldn't start the player: {e}", parent=top_)
-        brow = ttk.Frame(box)
+        def play_all():
+            """Build a small quick copy of the joined result (all kept sections) and play it with sound."""
+            src = cur_src()
+            if not MORE or not src or S["dur"] <= 0:
+                messagebox.showinfo(APP, "Choose a video first (and wait for the film strip to appear).", parent=top_)
+                return
+            ff = find_tool("ffplay") or str(Path(FFMPEG).with_name("ffplay" + (".exe" if os.name == "nt" else "")))
+            if not (os.path.exists(ff) or shutil.which(ff)):
+                messagebox.showinfo(APP, "ffplay (the player that comes with ffmpeg) was not found, so the result can't be played here.", parent=top_)
+                return
+            stop_play()
+            rngs = merge_ranges(extras() + [times()])
+            out_ = os.path.join(tempfile.gettempdir(), f"om_preview_{os.getpid()}.mp4")
+            abtn.configure(text="Building preview…", state="disabled")
+
+            def build():
+                err = ""
+                try:
+                    fc, maps, au = multi_filter(rngs, bool(probe(src)["has_a"]), small=True)
+                    r = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", src, "-filter_complex", fc] + maps +
+                                       ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "32", "-pix_fmt", "yuv420p"] + au + [out_],
+                                       capture_output=True, text=True, creationflags=NO_WINDOW)
+                    if r.returncode != 0 or not os.path.exists(out_):
+                        err = (r.stderr or "ffmpeg failed")[-300:]
+                except Exception as e:  # noqa: BLE001
+                    err = repr(e)
+
+                def done():
+                    if not alive():
+                        return
+                    abtn.configure(text="▶  Preview all kept sections", state="normal")
+                    if err:
+                        messagebox.showinfo(APP, f"Couldn't build the preview:\n{err}", parent=top_)
+                        return
+                    try:
+                        play["all"] = subprocess.Popen([ff, "-hide_banner", "-loglevel", "error", "-autoexit", "-x", "960",
+                                                        "-window_title", "All kept sections - close this window to stop", out_], creationflags=NO_WINDOW)
+                    except OSError as e:
+                        messagebox.showinfo(APP, f"Couldn't start the player: {e}", parent=top_)
+                q_.put(("call", done))
+            threading.Thread(target=build, daemon=True).start()
+
+        if MORE:  # buttons on the left; the colour key, shortcuts and section list on the right when the window is wide enough (else underneath)
+            low = ttk.Frame(box)
+            low.pack(fill="x")
+            lowl, lowr = ttk.Frame(low), ttk.Frame(low)
+            lowl.grid(row=0, column=0, sticky="nw")
+            lowr.grid(row=1, column=0, sticky="ew", pady=(8, 0))  # starts underneath so the window does not grow wider; moves right when there is room
+            low.columnconfigure(1, weight=1)
+            side = {"on": False}
+
+            def relayout(_e=None):
+                try:
+                    wide = top_.winfo_width() >= lowl.winfo_reqwidth() + 520
+                    if wide != side["on"]:
+                        side["on"] = wide
+                        if wide:
+                            lowr.grid_configure(row=0, column=1, sticky="nsew", padx=(24, 0), pady=0)
+                        else:
+                            lowr.grid_configure(row=1, column=0, sticky="ew", padx=0, pady=(8, 0))
+                except tk.TclError:
+                    pass
+            top_.bind("<Configure>", relayout, add="+")
+            top_.after(400, relayout)
+        else:
+            lowl = lowr = box
+        brow = ttk.Frame(lowl)
         brow.pack(fill="x", pady=(0, 6))
         ttk.Button(brow, text="▶  Play selection (with sound)", command=play_sel).pack(side="left")
         ttk.Button(brow, text="■  Stop", command=stop_play).pack(side="left", padx=(6, 0))
@@ -5299,7 +5438,7 @@ def gui():
             elif play.get("hold") is not None:
                 play_sel(start=play["hold"])
 
-        brow2 = ttk.Frame(box)
+        brow2 = ttk.Frame(lowl)
         brow2.pack(fill="x", pady=(0, 6))
         pbtn = ttk.Button(brow2, text="⏸  Pause", command=pause_or_resume)
         pbtn.pack(side="left")
@@ -5314,6 +5453,71 @@ def gui():
             else:
                 t = max(t, s_ + 0.1)
                 tkvars[KB].set("" if (cfg["blank"] and t >= S["dur"] - 0.05) else FMT[cfg["fb"]](t if cfg["blank"] else min(t, S["dur"] - 0.1)))
+        if MORE:
+            ttk.Button(brow2, text="+ Keep another section", command=lambda: add_section()).pack(side="left", padx=(6, 0))
+            ttk.Button(brow2, text="Remove this section", command=lambda: remove_section()).pack(side="left", padx=(6, 0))
+            ttk.Button(brow2, text="Invert (cut these, keep the rest)", command=lambda: invert()).pack(side="left", padx=(6, 0))
+            brow3 = ttk.Frame(lowl)
+            brow3.pack(fill="x", pady=(0, 6))
+            ttk.Button(brow3, text="↶ Undo", command=lambda: undo()).pack(side="left")
+            ttk.Button(brow3, text="↷ Redo", command=lambda: redo()).pack(side="left", padx=(6, 0))
+            abtn = ttk.Button(brow3, text="▶  Preview all kept sections", command=lambda: play_all())
+            abtn.pack(side="left", padx=(6, 0))
+            ttk.Label(lowr, text="Green = kept sections   |   Gold = the section you are editing (kept)   |   Red = CUT out", style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(0, 2))
+            SMALL = top_.winfo_screenheight() < 950  # small screens: the shortcut text and the section list sit behind buttons so the window fits
+            KEYS_TXT = "Space = play / pause\nI / O = set start / end at the pointer (or the paused green marker)\nN = keep another section\n← / → = nudge the last handle one frame (Shift = 1 second)\nCtrl+Z / Ctrl+Y = undo / redo"
+            if SMALL:
+                ttk.Button(brow3, text="Shortcuts", command=lambda: messagebox.showinfo(APP, KEYS_TXT, parent=top_)).pack(side="left", padx=(6, 0))
+            else:
+                ttk.Label(lowr, text="Keys: " + KEYS_TXT.replace("\n", "  |  "), style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(0, 4))
+            slist = ttk.Treeview(lowr, columns=("n", "start", "end", "len"), show="headings", height=6, selectmode="browse")
+            for col_, txt_, w_ in (("n", "#", 36), ("start", "Start", 110), ("end", "End", 110), ("len", "Length", 150)):
+                slist.heading(col_, text=txt_)
+                slist.column(col_, width=w_, anchor="w")
+            SL = {"rows": [], "busy": False, "shown": not SMALL}
+            if not SMALL:
+                slist.pack(fill="x", pady=(0, 4))
+            else:
+                def toggle_list():
+                    if SL["shown"]:
+                        slist.pack_forget()
+                    else:
+                        slist.pack(fill="x", pady=(0, 4))
+                    SL["shown"] = not SL["shown"]
+                ttk.Button(brow3, text="Section list", command=toggle_list).pack(side="left", padx=(6, 0))
+
+            def refresh_list():
+                if not alive() or S["dur"] <= 0:
+                    return
+                SL["busy"] = True
+                try:
+                    slist.delete(*slist.get_children())
+                    SL["rows"] = all_sections()
+                    for n_, (a_, b_, k_) in enumerate(SL["rows"]):
+                        slist.insert("", "end", iid=str(n_), values=(n_ + 1, fmt_ms(a_), fmt_ms(b_) if b_ < S["dur"] - 0.05 else "end", fmt_ms(b_ - a_) + ("   (editing)" if k_ is None else "")))
+                        if k_ is None:
+                            slist.selection_set(str(n_))
+                finally:
+                    SL["busy"] = False
+
+            def pick_row(_e=None):
+                if SL["busy"]:
+                    return
+                sel = slist.selection()
+                if not sel:
+                    return
+                a_, b_, k_ = SL["rows"][int(sel[0])]
+                if k_ is None:
+                    return  # already the one being edited
+                prev = snap()
+                ex = extras()
+                s0, e0 = times()
+                ex[k_] = (s0, e0)
+                put_extras(ex)
+                set_active(a_, b_)
+                push(prev)
+            slist.bind("<<TreeviewSelect>>", pick_row)
+            st["refresh_list"] = refresh_list
         if not WINDOW:
             ttk.Button(brow2, text="Start here", command=lambda: set_here("a")).pack(side="left", padx=(6, 0))
             ttk.Button(brow2, text="End here", command=lambda: set_here("b")).pack(side="left", padx=(6, 0))
@@ -5419,6 +5623,97 @@ def gui():
             e_ = min(max(e_, 0.0), d)
             return s_, max(e_, s_)
 
+        def extras():
+            if not MORE:
+                return []
+            try:
+                return parse_ranges(tkvars["more"].get(), S["dur"] or 1e9)
+            except ValueError:
+                return []
+
+        def put_extras(lst):
+            tkvars["more"].set("; ".join(f"{fmt_ms(a)}-{fmt_ms(b)}" for a, b in lst))
+
+        def set_active(a, b):
+            tkvars[KA].set(fmt_ms(a))
+            tkvars[KB].set("" if b >= S["dur"] - 0.05 else fmt_ms(b))
+
+        H = {"undo": [], "redo": [], "drag0": None}
+        SL_LAST = {}
+
+        def snap():
+            return (tkvars[KA].get(), tkvars[KB].get(), tkvars["more"].get()) if MORE else None
+
+        def push(prev):
+            """Remember the state from before a change so Undo can bring it back."""
+            if MORE and prev is not None and prev != snap():
+                H["undo"].append(prev)
+                del H["undo"][:-100]
+                H["redo"].clear()
+
+        def restore(sn):
+            tkvars["more"].set(sn[2])
+            tkvars[KA].set(sn[0])
+            tkvars[KB].set(sn[1])
+
+        def undo(*_):
+            if MORE and H["undo"]:
+                H["redo"].append(snap())
+                restore(H["undo"].pop())
+
+        def redo(*_):
+            if MORE and H["redo"]:
+                H["undo"].append(snap())
+                restore(H["redo"].pop())
+
+        def add_section():
+            if S["dur"] <= 0:
+                return
+            prev = snap()
+            s_, e_ = times()
+            put_extras(extras() + [(s_, e_)])
+            ln = max(0.5, e_ - s_)
+            a = e_ if e_ < S["dur"] - 0.5 else max(0.0, s_ - ln)  # the new one starts where the last ended (or before it, at the end of the clip)
+            set_active(a, min(S["dur"], a + ln))
+            push(prev)
+
+        def remove_section():
+            ex = extras()
+            if not ex:
+                return
+            prev = snap()
+            a, b = ex.pop()  # the last extra section takes the place of the active one
+            put_extras(ex)
+            set_active(a, b)
+            push(prev)
+
+        def invert():
+            """Cut what is kept and keep what is cut (so you can mark the bits to throw away)."""
+            if S["dur"] <= 0:
+                return
+            prev = snap()
+            kept = merge_ranges(extras() + [times()])
+            gaps, p_ = [], 0.0
+            for a_, b_ in kept:
+                if a_ - p_ >= 0.1:
+                    gaps.append((p_, a_))
+                p_ = max(p_, b_)
+            if S["dur"] - p_ >= 0.1:
+                gaps.append((p_, S["dur"]))
+            if not gaps:
+                messagebox.showinfo(APP, "Everything is kept, so there is nothing left to swap to.", parent=top_)
+                return
+            put_extras(gaps[1:])
+            set_active(*gaps[0])
+            push(prev)
+
+        def all_sections():
+            """[(start, end, extras index or None for the one being edited)] in time order."""
+            rows = [(a_, b_, k_) for k_, (a_, b_) in enumerate(extras())]
+            s_, e_ = times()
+            rows.append((s_, e_, None))
+            return sorted(rows, key=lambda r: (r[0], r[1]))
+
         def view():
             """The part of the file on show (seconds): all of it unless the audio waveform is zoomed in."""
             d = S["dur"]
@@ -5464,8 +5759,31 @@ def gui():
             xs, xe = x_of(s_), x_of(e_)
             lo_, hi_ = PAD, PAD + S["sw"]
             cs, ce = min(max(xs, lo_), hi_), min(max(xe, lo_), hi_)
-            cv.create_rectangle(lo_, RULER, cs, h_, fill="#000000", stipple="gray50", width=0)
-            cv.create_rectangle(ce, RULER, hi_, h_, fill="#000000", stipple="gray50", width=0)
+            ex = extras()
+            if MORE:  # Trim: everything NOT kept is dimmed hard and marked CUT, kept parts get a green frame
+                kept = merge_ranges(ex + [(s_, e_)])
+                gaps, prev = [], 0.0
+                for a_, b_ in kept:
+                    if a_ > prev:
+                        gaps.append((prev, a_))
+                    prev = max(prev, b_)
+                if prev < d:
+                    gaps.append((prev, d))
+                for a_, b_ in gaps:
+                    xa, xb = min(max(x_of(a_), lo_), hi_), min(max(x_of(b_), lo_), hi_)
+                    if xb - xa < 1:
+                        continue
+                    cv.create_rectangle(xa, RULER, xb, h_, outline="#ef4444", width=2)
+                    if xb - xa > 34:
+                        cv.create_text((xa + xb) / 2, RULER + S["th"] / 2, text="CUT", fill="#fca5a5", font=f_base)
+                for k_, (a_, b_) in enumerate(ex):
+                    xa, xb = min(max(x_of(a_), lo_), hi_), min(max(x_of(b_), lo_), hi_)
+                    cv.create_rectangle(xa, RULER, xb, h_, outline="#22c55e", width=3)
+                    if xb - xa > 18:
+                        cv.create_text(xa + 5, RULER + 3, text=str(k_ + 1), anchor="nw", fill="#86efac", font=f_base)
+            else:
+                cv.create_rectangle(lo_, RULER, cs, h_, fill="#000000", stipple="gray50", width=0)
+                cv.create_rectangle(ce, RULER, hi_, h_, fill="#000000", stipple="gray50", width=0)
             cv.create_rectangle(cs, RULER, ce, h_, outline=BRAND_GOLD, width=2)
             for x, side in ((xs, -1), (xe, 1)):
                 x = min(max(x, lo_ + 8), hi_ - 8)  # a handle beyond the zoomed view is shown at the edge so it can still be grabbed
@@ -5474,15 +5792,22 @@ def gui():
                 cv.create_line(x0 + 4, RULER + 10, x0 + 4, h_ - 8, fill="#5a4300")
             # length of the selection (the delta between the two handles), centred at the top of the box
             txt = "Length " + fmt_ms(max(0.0, e_ - s_))
+            if ex:
+                txt += f"  |  {len(ex) + 1} sections, {fmt_ms(sum(b - a for a, b in merge_ranges(ex + [(s_, e_)])))} kept"
             tw = f_base.measure(txt) + 14
             cx = (cs + ce) / 2
             lh = f_base.metrics("linespace") + 6
             cw_ = int(cv.cget("width"))
             cx = min(max(cx, tw / 2 + 2), cw_ - tw / 2 - 2)  # keep the label inside the picture
-            ly0 = RULER + 6 if ce - cs > tw + 24 else h_ - lh - 6  # a short selection: the label sits low, clear of the handles
+            ly0 = h_ + 6 if MORE else (RULER + 6 if ce - cs > tw + 24 else h_ - lh - 6)  # Trim: the counter sits under the strip; others: a short selection puts it low, clear of the handles
             cv.create_rectangle(cx - tw / 2, ly0, cx + tw / 2, ly0 + lh, fill="#000000", outline=BRAND_GOLD)
             cv.create_text(cx, ly0 + lh / 2, text=txt, fill=BRAND_GOLD, font=f_base)
             draw_ph()
+            if MORE and st.get("refresh_list"):
+                key_ = (tkvars[KA].get(), tkvars[KB].get(), tkvars["more"].get())
+                if SL_LAST.get("k") != key_:  # only rebuild the list when the sections changed
+                    SL_LAST["k"] = key_
+                    st["refresh_list"]()
 
         # Moving play marker: a green line with the time, so you can hear where to cut (the player starts about a quarter of a second late).
         PH, PHT = "#22c55e", "#86efac"  # green marker
@@ -5558,7 +5883,19 @@ def gui():
                 return
             s_, e_ = times()
             ds, de = abs(e.x - x_of(s_)), abs(e.x - x_of(e_))
+            if MORE and min(ds, de) > 12 and not (x_of(s_) < e.x < x_of(e_)):
+                t = t_of(e.x)
+                ex = extras()
+                for k_, (a_, b_) in enumerate(ex):
+                    if a_ <= t <= b_:  # clicked another kept section: make it the one being edited
+                        prev = snap()
+                        ex[k_] = (s_, e_)
+                        put_extras(ex)
+                        set_active(a_, b_)
+                        push(prev)
+                        return
             S["drag"] = "start" if ds <= de else "end"
+            H["drag0"] = snap()
             move(e)
 
         def move(e):
@@ -5587,14 +5924,75 @@ def gui():
 
         def release(e):
             S["drag"] = None
+            if MORE and H.get("drag0") is not None:
+                push(H["drag0"])  # one Undo step per drag
+                H["drag0"] = None
 
         cv.bind("<ButtonPress-1>", press)
         cv.bind("<B1-Motion>", move)
         cv.bind("<ButtonRelease-1>", release)
         cv.bind("<Motion>", lambda e: hover(e.x) if not S["drag"] else None)
         cv.bind("<Leave>", lambda e: cv.delete("hov"))
-        for v in (tkvars[KA], tkvars[KB]):
+        for v in (tkvars[KA], tkvars[KB]) + ((tkvars["more"],) if MORE else ()):
             v.trace_add("write", track)
+
+        if MORE:
+            def typing():
+                try:
+                    return top_.focus_get().winfo_class() in ("TEntry", "Entry", "TCombobox", "Combobox", "Text", "TSpinbox")
+                except (KeyError, AttributeError, tk.TclError):
+                    return False
+
+            def key_time():
+                if play.get("hold") is not None:
+                    return play["hold"]
+                return t_of(S["mx"]) if S.get("mx") is not None else None
+
+            def mark(which):
+                t = key_time()
+                if t is None or S["dur"] <= 0:
+                    return
+                prev = snap()
+                s_, e_ = times()
+                if which == "a":
+                    tkvars[KA].set(fmt_ms(min(t, max(0.0, e_ - 0.1))))
+                else:
+                    t = max(t, s_ + 0.1)
+                    tkvars[KB].set("" if t >= S["dur"] - 0.05 else fmt_ms(t))
+                push(prev)
+
+            def nudge(sign, e):
+                if S["dur"] <= 0:
+                    return
+                step = (1.0 if (e.state & 1) else 0.04) * sign
+                prev = snap()
+                s_, e_ = times()
+                if st.get("focus") == "end":
+                    t = min(max(e_ + step, s_ + 0.1), S["dur"])
+                    tkvars[KB].set("" if t >= S["dur"] - 0.05 else fmt_ms(t))
+                else:
+                    tkvars[KA].set(fmt_ms(min(max(s_ + step, 0.0), max(0.0, e_ - 0.1))))
+                push(prev)
+
+            def guarded(fn):
+                def h(e):
+                    try:
+                        fc_ = top_.focus_get().winfo_class()
+                    except (KeyError, AttributeError, tk.TclError):
+                        fc_ = ""
+                    if typing() or fc_ in ("Treeview", "TScale", "Scale", "TButton", "Button"):
+                        return None  # those widgets use these keys themselves
+                    fn(e)
+                    return "break"
+                return h
+            top_.bind("<Key-i>", guarded(lambda e: mark("a")), add="+")
+            top_.bind("<Key-o>", guarded(lambda e: mark("b")), add="+")
+            top_.bind("<Key-n>", guarded(lambda e: add_section()), add="+")
+            top_.bind("<Key-space>", guarded(lambda e: pause_or_resume() if (play["proc"] is not None or play.get("hold") is not None) else play_sel()), add="+")
+            top_.bind("<Left>", guarded(lambda e: nudge(-1, e)), add="+")
+            top_.bind("<Right>", guarded(lambda e: nudge(1, e)), add="+")
+            top_.bind("<Control-z>", lambda e: (undo(), "break")[1], add="+")
+            top_.bind("<Control-y>", lambda e: (redo(), "break")[1], add="+")
 
         def install(png, dur, sw, sh):
             if not alive():
@@ -5608,7 +6006,9 @@ def gui():
             else:
                 S.update(dur=dur, sw=sw, th=sh)
                 S["prev"] = times()
-                cv.configure(width=sw + 2 * PAD, height=RULER + sh + 6)
+                cv.configure(width=sw + 2 * PAD, height=RULER + sh + 6 + XTRA)
+                if holder is not None:
+                    holder.configure(height=RULER + sh + 12 + XTRA)
             redraw()
 
         def work():
@@ -6067,6 +6467,10 @@ def gui():
         src = cur_src({"files": getters["files"]()} if "files" in getters else None)
         box = ttk.LabelFrame(frm, text="Live preview", padding=8)
         box.grid(row=0, column=3, rowspan=max(nrows, 4), sticky="n", padx=(18, 0))
+        sbox = None
+        if spec["id"] == "trim":  # Trim: the film strip goes along the bottom of the dialog, full width
+            sbox = ttk.LabelFrame(frm, text="Film strip: keep / cut", padding=8)
+            sbox.grid(row=nrows + 1, column=0, columnspan=4, sticky="ew", pady=(12, 0))
         if spec["id"] == "atrim":  # audio file: no pictures, just the waveform with its two handles
             box.configure(text="Selection")
             ast = {"n": 0, "after": None, "imgs": [], "focus": "start"}
@@ -6297,7 +6701,7 @@ def gui():
                 write_log(f"clip timeline setup failed: {e!r}")
         if strip_cfg and strip_cfg["a"] in tkvars and strip_cfg["b"] in tkvars:
             try:
-                attach_strip(top_, box, tkvars, cur_src, st, q, dim["w"], strip_cfg)
+                attach_strip(top_, sbox or box, tkvars, cur_src, st, q, 900 if sbox else dim["w"], strip_cfg)
             except Exception as e:  # noqa: BLE001
                 write_log(f"film strip setup failed: {e!r}")
         note = ttk.Label(box, text="", style="Muted.TLabel", wraplength=dim["w"] + 10)
@@ -6439,6 +6843,11 @@ def gui():
             if not top_.winfo_exists():
                 return
             # how much bigger the window is than the size its contents ask for = room to give to the preview
+            if sbox is not None and st.get("resize_strip"):  # the strip follows the window width
+                sw_ = max(560, top_.winfo_width() - 60)
+                if abs(sw_ - rz.get("sw", 0)) > 8:
+                    rz["sw"] = sw_
+                    st["resize_strip"](sw_, 70)
             nw = max(base_w, dim["w"] + top_.winfo_width() - top_.winfo_reqwidth())
             nh = max(base_h, dim["h"] + (top_.winfo_height() - top_.winfo_reqheight()) // max(1, len(holds)))  # extra height is shared between the pictures
             if abs(nw - dim["w"]) < 8 and abs(nh - dim["h"]) < 8:
@@ -6447,7 +6856,7 @@ def gui():
             for h_ in holds:
                 h_.configure(width=nw, height=nh)
             note.configure(wraplength=nw + 10)
-            if st.get("resize_strip"):
+            if st.get("resize_strip") and sbox is None:
                 st["resize_strip"](nw)
             if st.get("resize_tl"):
                 st["resize_tl"](nw)
@@ -6808,6 +7217,18 @@ def selftest_extras():
     topts = convert_opts(trim, {**default_opts(trim), "start": "1", "end": "3"})
     text = format_commands(trim, topts, str(clip), str(work / "out"))
     check("format_commands trim", text.startswith("ffmpeg -y") and "-ss 1" in text and "a clip_trim.mp4" in text and '"' in text, text)
+    # multi-section trim: three kept ranges (one overlapping) are cut and joined; total length is the merged sum
+    mc = Ctx(str(clip), str(work / "out"), None)
+    mo = dict(start="0", end="1", more="0.5-1.5; 2-2.5; 3-", mode="Re-encode (exact cut)")
+    mj = b_trim(mo, mc)[0]
+    check("multi trim: merged length", abs(mj["dur"] - (1.5 + 0.5 + (mc.dur - 3))) < 0.01, str(mj["dur"]))
+    check("multi trim: concat filter", "concat=n=3" in " ".join(mj["args"]), " ".join(mj["args"]))
+    try:
+        parse_ranges("5-3", 30)
+        check("parse_ranges rejects end before start", False)
+    except ValueError:
+        check("parse_ranges rejects end before start", True)
+    check("merge_ranges", merge_ranges([(10, 12), (2, 5), (4, 6)]) == [(2, 6), (10, 12)])
     check("format_commands has no internal flags", "-progress" not in text and "-nostats" not in text, text)
     copts = convert_opts(crop, {**default_opts(crop), "w": "min(iw,ih)", "h": "ih/2"})
     check("crop_filter escapes commas", "min(iw\\,ih)" in crop_filter(copts), crop_filter(copts))
