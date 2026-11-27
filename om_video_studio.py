@@ -5464,14 +5464,27 @@ def gui():
             abtn = ttk.Button(brow3, text="▶  Preview all kept sections", command=lambda: play_all())
             abtn.pack(side="left", padx=(6, 0))
             ttk.Label(lowr, text="Green = kept sections   |   Gold = the section you are editing (kept)   |   Red = CUT out", style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(0, 2))
-            ttk.Label(lowr, text="Keys: Space play/pause  |  I / O = start / end at the pointer (or the paused marker)  |  N = keep another section  |  ← / → = nudge the last handle one frame (Shift = 1 s)  |  Ctrl+Z / Ctrl+Y = undo / redo",
-                      style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(0, 4))
+            SMALL = top_.winfo_screenheight() < 950  # small screens: the shortcut text and the section list sit behind buttons so the window fits
+            KEYS_TXT = "Space = play / pause\nI / O = set start / end at the pointer (or the paused green marker)\nN = keep another section\n← / → = nudge the last handle one frame (Shift = 1 second)\nCtrl+Z / Ctrl+Y = undo / redo"
+            if SMALL:
+                ttk.Button(brow3, text="Shortcuts", command=lambda: messagebox.showinfo(APP, KEYS_TXT, parent=top_)).pack(side="left", padx=(6, 0))
+            else:
+                ttk.Label(lowr, text="Keys: " + KEYS_TXT.replace("\n", "  |  "), style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(0, 4))
             slist = ttk.Treeview(lowr, columns=("n", "start", "end", "len"), show="headings", height=6, selectmode="browse")
             for col_, txt_, w_ in (("n", "#", 36), ("start", "Start", 110), ("end", "End", 110), ("len", "Length", 150)):
                 slist.heading(col_, text=txt_)
                 slist.column(col_, width=w_, anchor="w")
-            slist.pack(fill="x", pady=(0, 4))
-            SL = {"rows": [], "busy": False}
+            SL = {"rows": [], "busy": False, "shown": not SMALL}
+            if not SMALL:
+                slist.pack(fill="x", pady=(0, 4))
+            else:
+                def toggle_list():
+                    if SL["shown"]:
+                        slist.pack_forget()
+                    else:
+                        slist.pack(fill="x", pady=(0, 4))
+                    SL["shown"] = not SL["shown"]
+                ttk.Button(brow3, text="Section list", command=toggle_list).pack(side="left", padx=(6, 0))
 
             def refresh_list():
                 if not alive() or S["dur"] <= 0:
