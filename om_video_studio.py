@@ -5270,6 +5270,7 @@ def gui():
     def attach_strip(top_, box, tkvars, cur_src, st, q_, pw, cfg=None):
         cfg = cfg or STRIP_OPS["trim"]
         KA, KB, WINDOW = cfg["a"], cfg["b"], cfg["mode"] == "window"
+        MORE = cfg["mode"] == "range" and "more" in tkvars  # Trim: several kept sections
 
         def num(t):
             return (f"{max(0.0, t):.3f}".rstrip("0").rstrip(".")) or "0"
@@ -5364,8 +5365,8 @@ def gui():
                 t = max(t, s_ + 0.1)
                 tkvars[KB].set("" if (cfg["blank"] and t >= S["dur"] - 0.05) else FMT[cfg["fb"]](t if cfg["blank"] else min(t, S["dur"] - 0.1)))
         if MORE:
-            ttk.Button(brow2, text="+ Keep another section", command=add_section).pack(side="left", padx=(6, 0))
-            ttk.Button(brow2, text="Remove this section", command=remove_section).pack(side="left", padx=(6, 0))
+            ttk.Button(brow2, text="+ Keep another section", command=lambda: add_section()).pack(side="left", padx=(6, 0))
+            ttk.Button(brow2, text="Remove this section", command=lambda: remove_section()).pack(side="left", padx=(6, 0))
         if not WINDOW:
             ttk.Button(brow2, text="Start here", command=lambda: set_here("a")).pack(side="left", padx=(6, 0))
             ttk.Button(brow2, text="End here", command=lambda: set_here("b")).pack(side="left", padx=(6, 0))
@@ -5470,8 +5471,6 @@ def gui():
             s_ = min(max(s_, 0.0), d)
             e_ = min(max(e_, 0.0), d)
             return s_, max(e_, s_)
-
-        MORE = cfg["mode"] == "range" and "more" in tkvars  # Trim: several kept sections
 
         def extras():
             if not MORE:
