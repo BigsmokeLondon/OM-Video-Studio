@@ -2,6 +2,10 @@
 
 All notable changes to O.M. Video Studio. Newest first. Downloads for every version are on the [releases page](https://github.com/BigsmokeLondon/OM-Video-Studio/releases).
 
+## 1.22.0 - 2026-11-27
+
+**New tool: Zoom & Pan.** Zoom in and out and move across a video at different speeds, anywhere along its length. A timeline under the picture has a Zoom lane and a Pan lane: scrub to a moment, turn the mouse wheel on the picture to zoom and drag to move the gold box, and a marker appears. Slide markers to change when things happen, and pick one to set its speed (Smooth, Steady, Slow start, Slow end or Jump) or type its exact value. The picture and the result follow the slider at once, and **Play preview** opens a separate window that plays the move (a rough copy, no sound; the saved video is full quality and keeps its sound). The output can stay the original size or be reframed, for example vertical for TikTok. 73 tools in total.
+
 ## 1.21.0 - 2026-11-27
 
 **Trim can keep several sections.** In Trim / cut, press "Keep another section" to mark more parts of the same video; they show as blue bands on the film strip, click one to edit it, and "Remove this section" drops the one you are editing. When you run it the kept sections are cut out and joined in time order (overlapping ones are merged). You can also type them in "More sections to keep", like 1:00-1:30; 2:00-2:20. Several sections are always re-encoded. The film strip sits along the bottom of the window and shows kept parts in green and cut parts in red. A section list under it (click a row to edit that section), **Invert** (mark what to throw away, then swap), **Undo / Redo** (Ctrl+Z / Ctrl+Y), keyboard shortcuts (Space play/pause, I / O set start / end, N new section, arrows nudge a frame, Shift = 1 s) and **Preview all kept sections** (plays the joined result with sound).

@@ -3,13 +3,15 @@
 ![O.M. Video Studio demo](docs/images/demo.gif)
 
 Free point-and-click video, audio and image tools for Windows, powered by ffmpeg. Pick a file, press a button. No commands to learn.
-Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, thumbnails, one-click social-media export and more (72 operations).
+Trim, join, split, convert, compress, extract audio, subtitles, effects, GIFs, thumbnails, one-click social-media export and more (73 operations).
 
 ## Screenshots
 
 | Pick a tool | One-click social export | Finished |
 |---|---|---|
 | [![Main window](docs/images/main-window.png)](docs/images/main-window.png) | [![Social export](docs/images/social-export.png)](docs/images/social-export.png) | [![Finished run](docs/images/finished-run.png)](docs/images/finished-run.png) |
+
+**New in 1.22.0:** **New tool: Zoom & Pan.** Zoom in and out and move across a video at different speeds. Scrub a timeline, use the mouse wheel to zoom and drag to pan, and set each move to Smooth, Steady, Slow start, Slow end or Jump. Press Play preview to watch the move in a pop-out window. Reframe the output (for example vertical) if you like. 73 tools.
 
 **New in 1.21.0:** **Trim keeps several sections.** Mark more than one part of a video on the film strip and they are cut out and joined in order.
 

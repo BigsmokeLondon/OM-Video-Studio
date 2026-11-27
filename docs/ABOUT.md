@@ -82,6 +82,12 @@ Cut away the edges of the picture. The defaults crop a centred square; the boxes
 
 **Options:** Width (text, default 'min(iw,ih)'); Height (text, default 'min(iw,ih)'); X offset (text, default '(iw-ow)/2'); Y offset (text, default '(ih-oh)/2')
 
+### Zoom & Pan
+
+\U0001F50D
+
+**Options:** Output size; Zoom and pan markers (use the timeline under the picture)
+
 ### Rotate
 
 ![Rotate](images/tools/rotate.png)

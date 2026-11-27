@@ -65,7 +65,7 @@ from pathlib import Path
 #  *_EXT sets: decide which files the "kind" checker accepts for each operation
 #  and which extensions the file pickers show.
 APP = "O.M. Video Studio"
-VERSION = "1.21.0"
+VERSION = "1.22.0"
 GITHUB_REPO = "BigsmokeLondon/OM-Video-Studio"  # releases are checked here for updates
 # Contact form in the About window: messages are delivered by Formspree (its own form, separate from the Punjab & Kashmir Explorer).
 # Put the form's address here, e.g. "https://formspree.io/f/xxxxxxxx". While it is empty, Send explains that and Copy message still works.
@@ -2157,6 +2157,403 @@ def b_faceblur(o, c):
     return [job([], outp, c.dur, func=_faceblur_job(c, o, outp), pc=True)]
 
 
+# ---- ZOOM & PAN (super tool): keyframed zoom and pan along the length of a video.
+#  Two independent lanes of markers: Zoom (time, zoom) and Pan (time, centre x %, centre y %), each marker with a speed style for the move into it.
+ZP_EASE = ["Smooth", "Steady", "Slow start", "Slow end", "Jump"]
+ZP_SIZES = ["Same as the video", "1080x1920 (vertical, TikTok)", "1920x1080 (wide)", "1080x1080 (square)", "1080x1350 (4:5)"]
+ZP_MAXZOOM = 8.0
+
+
+def _zp_ease_name(s):
+    k = str(s or "").lower().replace(" ", "").replace("-", "").replace("_", "")
+    m = {"": "Smooth", "smooth": "Smooth", "steady": "Steady", "linear": "Steady", "slowstart": "Slow start", "slowend": "Slow end", "jump": "Jump", "cut": "Jump"}
+    if k not in m:
+        raise ValueError("unknown speed style")
+    return m[k]
+
+
+def parse_zoompan(text):
+    """'Z 0 1; Z 4 2.5 slow end; P 0 50 50; P 6 30 40' -> ([(t, zoom, ease)...], [(t, x%, y%, ease)...]), each sorted by time."""
+    zk, pk = [], []
+    for part in str(text or "").split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        tok = part.split()
+        try:
+            kind = tok[0].upper()
+            n = {"Z": 1, "P": 2}[kind]
+            if len(tok) < 2 + n:
+                raise ValueError("short")
+            t = tsec(tok[1])
+            vals = [float(x) for x in tok[2:2 + n]]
+            ease = _zp_ease_name(" ".join(tok[2 + n:]))
+        except (ValueError, KeyError, IndexError):
+            raise ValueError(f"Could not read the marker '{part}'. Use  Z time zoom [speed]  or  P time x y [speed]  (speed: Smooth, Steady, Slow start, Slow end, Jump).") from None
+        if t < 0:
+            raise ValueError(f"A marker time cannot be negative: '{part}'.")
+        if kind == "Z":
+            zk.append((t, min(max(1.0, vals[0]), ZP_MAXZOOM), ease))
+        else:
+            pk.append((t, min(max(0.0, vals[0]), 100.0), min(max(0.0, vals[1]), 100.0), ease))
+    zk.sort(key=lambda k: k[0])
+    pk.sort(key=lambda k: k[0])
+    return zk, pk
+
+
+def format_zoompan(zk, pk):
+    out = []
+    for t, z, e in zk:
+        out.append(f"Z {t:.2f} {z:.3f}" + ("" if e == "Smooth" else " " + e))
+    for t, x, y, e in pk:
+        out.append(f"P {t:.2f} {x:.1f} {y:.1f}" + ("" if e == "Smooth" else " " + e))
+    return "; ".join(out)
+
+
+def _zp_curve(u, ease):
+    if ease == "Steady":
+        return u
+    if ease == "Slow start":
+        return u * u
+    if ease == "Slow end":
+        return 1.0 - (1.0 - u) * (1.0 - u)
+    if ease == "Jump":
+        return 1.0 if u >= 1.0 else 0.0
+    return u * u * u * (u * (6.0 * u - 15.0) + 10.0)  # smooth: slow in, slow out
+
+
+def _zp_seg(keys, t):
+    """(a, b, curved u) for the two markers around time t, or (key, None, 0) when t is before / after all of them."""
+    if t <= keys[0][0]:
+        return keys[0], None, 0.0
+    for a, b in zip(keys, keys[1:]):
+        if t < b[0]:
+            return a, b, _zp_curve((t - a[0]) / (b[0] - a[0]), b[-1])
+    return keys[-1], None, 0.0
+
+
+def zp_zoom_at(keys, t):
+    if not keys:
+        return 1.0
+    a, b, e = _zp_seg(keys, t)
+    if b is None:
+        return a[1]
+    return math.exp(math.log(a[1]) + (math.log(b[1]) - math.log(a[1])) * e)  # zoom changes evenly "in steps of the same ratio"
+
+
+def zp_pan_at(keys, t):
+    if not keys:
+        return 50.0, 50.0
+    a, b, e = _zp_seg(keys, t)
+    if b is None:
+        return a[1], a[2]
+    return a[1] + (b[1] - a[1]) * e, a[2] + (b[2] - a[2]) * e
+
+
+def zp_window(W, H, oW, oH, zoom, px, py):
+    """The part of the picture that is kept: (x0, y0, w, h) in source pixels. Zoom 1 = the biggest window of the output's shape that fits."""
+    a = oW / float(oH)
+    if W / float(H) > a:
+        bh = float(H)
+        bw = bh * a
+    else:
+        bw = float(W)
+        bh = bw / a
+    w, h = bw / zoom, bh / zoom
+    x0 = min(max(0.0, px / 100.0 * W - w / 2.0), W - w)
+    y0 = min(max(0.0, py / 100.0 * H - h / 2.0), H - h)
+    return x0, y0, w, h
+
+
+def zp_out_size(o, W, H):
+    m = re.match(r"\s*(\d+)\s*x\s*(\d+)", str(o.get("size") or ""))
+    if m:
+        return int(m.group(1)) // 2 * 2, int(m.group(2)) // 2 * 2
+    return W // 2 * 2, H // 2 * 2
+
+
+def zp_render(np, cv2, frame, win, oW, oH):
+    x0, y0, w, h = win
+    sx, sy = oW / w, oH / h
+    if sx >= 0.999:  # zooming in: sharp (cubic) scaling straight from the exact window
+        M = np.float32([[sx, 0, -x0 * sx], [0, sy, -y0 * sy]])
+        return cv2.warpAffine(frame, M, (oW, oH), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    xi0, yi0 = int(x0), int(y0)
+    xi1, yi1 = min(frame.shape[1], int(math.ceil(x0 + w))), min(frame.shape[0], int(math.ceil(y0 + h)))
+    return cv2.resize(frame[yi0:yi1, xi0:xi1], (oW, oH), interpolation=cv2.INTER_AREA)
+
+
+def _video_geometry(c):
+    """Shown size (turned / non-square-pixel videos corrected), frame rate and its text, for the Python-side video tools."""
+    v = c.info["v"] or {}
+    W, H = c.w, c.h
+    try:
+        sn, sd_ = (v.get("sample_aspect_ratio") or "1:1").split(":")
+        if int(sd_) > 0 and int(sn) > 0 and int(sn) != int(sd_):
+            W = int(round(W * int(sn) / int(sd_)))
+    except (ValueError, TypeError):
+        pass
+    rot = 0
+    try:
+        rot = int((v.get("tags") or {}).get("rotate", 0))
+    except ValueError:
+        pass
+    for sd in v.get("side_data_list", []) or []:
+        if "rotation" in sd:
+            rot = int(float(sd["rotation"]))
+    if abs(rot) % 180 == 90:
+        W, H = H, W
+    W, H = W // 2 * 2, H // 2 * 2
+    fps = c.info["fps"] or 0.0
+    fps_s = v.get("r_frame_rate") or ""
+    if fps <= 0 or fps_s in ("", "0/0"):
+        fps, fps_s = 25.0, "25"
+    return W, H, fps, fps_s
+
+
+def _zoompan_job(c, o, outp):
+    def run(log, progress, cancel):
+        try:
+            import numpy as np
+            import cv2
+        except ImportError:
+            log("Zoom & Pan needs the OpenCV and numpy Python packages. Install them with: pip install opencv-python-headless numpy "
+                "(the installer version of the app already has them, so if you see this there, please re-install).")
+            return 1
+        cv2.setNumThreads(max(1, (os.cpu_count() or 2) - 1))
+        zk, pk = parse_zoompan(o.get("keys", ""))
+        W, H, fps, fps_s = _video_geometry(c)
+        if W < 16 or H < 16:
+            log("Could not read the size of this video.")
+            return 1
+        oW, oH = zp_out_size(o, W, H)
+        total = max(1, int(c.dur * fps))
+        dec = [FFMPEG, "-hide_banner", "-nostdin", "-loglevel", "error", "-i", c.src, "-an", "-sn", "-dn",
+               "-vf", f"scale={W}:{H},setsar=1", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+        enc = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgr24",
+               "-s", f"{oW}x{oH}", "-r", fps_s, "-i", "-", "-i", c.src, "-map", "0:v:0", "-map", "1:a?",
+               "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p"] + vcodec(18) + AAC + \
+              ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-movflags", "+faststart", outp]
+        log(f"Zoom & Pan: {W}x{H} -> {oW}x{oH}, {len(zk)} zoom marker(s), {len(pk)} pan marker(s), about {total} pictures.")
+        pd = subprocess.Popen(dec, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NO_WINDOW)
+        pe = subprocess.Popen(enc, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=NO_WINDOW)
+        errs, derrs = [], []
+        te = threading.Thread(target=lambda: [errs.append(x.decode("utf-8", "replace").rstrip()) for x in pe.stderr], daemon=True)
+        td = threading.Thread(target=lambda: [derrs.append(x.decode("utf-8", "replace").rstrip()) for x in pd.stderr], daemon=True)
+        te.start()
+        td.start()
+        fsz = W * H * 3
+        fi = 0
+        ok = True
+        try:
+            while True:
+                if cancel.is_set():
+                    ok = False
+                    break
+                buf = pd.stdout.read(fsz)
+                if len(buf) < fsz:
+                    break
+                frame = np.frombuffer(buf, np.uint8).reshape(H, W, 3)
+                t = fi / fps
+                px, py = zp_pan_at(pk, t)
+                out = zp_render(np, cv2, frame, zp_window(W, H, oW, oH, zp_zoom_at(zk, t), px, py), oW, oH)
+                try:
+                    pe.stdin.write(out.tobytes())
+                except (BrokenPipeError, OSError):
+                    ok = False
+                    break
+                fi += 1
+                if fi % 5 == 0:
+                    progress(min(0.99, fi / total))
+        finally:
+            try:
+                pd.stdout.close()
+            except Exception:  # noqa: BLE001
+                pass
+            if not ok:
+                pd.kill()
+            try:
+                pe.stdin.close()
+            except Exception:  # noqa: BLE001
+                pass
+            if not ok:
+                pe.kill()
+            pd.wait()
+            pe.wait()
+            te.join(timeout=5)
+            td.join(timeout=5)
+
+        def drop_partial():
+            try:
+                if os.path.exists(outp):
+                    os.remove(outp)
+            except OSError:
+                pass
+        if not ok:
+            if cancel.is_set():
+                log("Cancelled.")
+            else:
+                for x in errs[-5:]:
+                    log(x)
+            drop_partial()
+            return 1
+        if pe.returncode != 0 or fi == 0:
+            for x in (errs or derrs)[-5:]:
+                log(x)
+            drop_partial()
+            return pe.returncode or 1
+        if pd.returncode not in (0, None) or derrs:
+            log("Warning: the video could not be read to the end, so the result may be shorter than the original. " + (derrs[-1] if derrs else ""))
+        progress(1.0)
+        return 0
+    return run
+
+
+class ZPProxy:
+    """A small copy of the video kept in memory (JPEG pictures), so Zoom & Pan can be scrubbed and played at once
+    without asking ffmpeg for a picture every time. Built in the background; early parts are usable while it grows."""
+    PW, MAXF, MAXFPS = 640, 3000, 12.0
+
+    def __init__(self, src):
+        self.src, self.frames, self.fps = src, [], 1.0
+        self.dur, self.W, self.H, self.pw, self.ph = 0.0, 0, 0, 0, 0
+        self.done = self.failed = self.stopped = False
+        self.proc = None
+        self._last = (-1, None)
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def stop(self):
+        self.stopped = True
+        try:
+            if self.proc is not None and self.proc.poll() is None:
+                self.proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def progress(self):
+        if self.done:
+            return 1.0
+        return min(0.99, (len(self.frames) / self.fps) / self.dur) if self.dur > 0 else 0.0
+
+    def _run(self):
+        try:
+            import numpy as np
+            import cv2
+            c = Ctx(self.src, None, "")
+            W, H, _fps, _fs = _video_geometry(c)
+            if W < 16 or H < 16 or not c.dur:
+                raise ValueError("size or length unknown")
+            self.dur, self.W, self.H = float(c.dur), W, H
+            self.pw = min(self.PW, W) // 2 * 2
+            self.ph = max(2, int(round(H * self.pw / float(W))) // 2 * 2)
+            self.fps = max(0.2, min(self.MAXFPS, self.MAXF / max(1.0, self.dur)))
+            cmd = [FFMPEG, "-hide_banner", "-nostdin", "-loglevel", "error", "-i", self.src, "-an", "-sn", "-dn",
+                   "-vf", f"fps={self.fps:.4f},scale={W}:{H},setsar=1,scale={self.pw}:{self.ph}",
+                   "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+            fsz = self.pw * self.ph * 3
+            while not self.stopped:
+                buf = self.proc.stdout.read(fsz)
+                if len(buf) < fsz:
+                    break
+                ok, enc = cv2.imencode(".jpg", np.frombuffer(buf, np.uint8).reshape(self.ph, self.pw, 3), [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ok:
+                    self.frames.append(enc.tobytes())
+            self.proc.wait()
+            self.done = True
+            if not self.frames:
+                self.failed = True
+        except Exception as e:  # noqa: BLE001
+            write_log(f"zoom and pan preview copy failed: {e!r}")
+            self.failed = True
+
+    def frame(self, t):
+        """The picture nearest to time t (the last one built so far if t is not reached yet), or None."""
+        n = len(self.frames)
+        if n == 0:
+            return None
+        i = min(max(0, int(t * self.fps + 0.5)), n - 1)
+        if self._last[0] == i:
+            return self._last[1]
+        import numpy as np
+        import cv2
+        img = cv2.imdecode(np.frombuffer(self.frames[i], np.uint8), cv2.IMREAD_COLOR)
+        self._last = (i, img)
+        return img
+
+
+def zp_live_result(np, cv2, frame, zk, pk, t, size_text):
+    """The result at time t drawn from a (small) picture: same maths as the real render. Returns a BGR picture."""
+    H, W = frame.shape[:2]
+    m = re.match(r"\s*(\d+)\s*x\s*(\d+)", str(size_text or ""))
+    if m and int(m.group(1)) > 0 and int(m.group(2)) > 0:
+        a = int(m.group(1)) / float(int(m.group(2)))
+        oW, oH = (W, max(2, int(round(W / a)))) if a >= 1 else (max(2, int(round(H * a))), H)
+    else:
+        oW, oH = W, H
+    px, py = zp_pan_at(pk, t)
+    return zp_render(np, cv2, frame, zp_window(W, H, oW, oH, zp_zoom_at(zk, t), px, py), oW, oH)
+
+
+def zp_ppm(cv2, img, maxw, maxh):
+    """A picture shrunk to fit maxw x maxh and packed for tkinter's PhotoImage (PPM, no PNG step)."""
+    h, w = img.shape[:2]
+    k = min(maxw / float(w), maxh / float(h))
+    if abs(k - 1.0) > 1e-3:
+        img = cv2.resize(img, (max(1, int(w * k)), max(1, int(h * k))), interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_LINEAR)
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    return b"P6\n%d %d\n255\n" % (rgb.shape[1], rgb.shape[0]) + rgb.tobytes()
+
+
+def zoompan_preview(o, src, t, out_png):
+    """One picture of the result at time t (what the output looks like at that moment). True on success."""
+    try:
+        import numpy as np
+        import cv2
+        zk, pk = parse_zoompan(o.get("keys", ""))
+    except (ImportError, ValueError):
+        return False
+    tmp = tempfile.mkdtemp(prefix="ffprev_")
+    try:
+        fp = os.path.join(tmp, "f.png")
+        if not grab_frame(src, t, fp, box=None):
+            return False
+        frame = cv2.imdecode(np.fromfile(fp, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            return False
+        H, W = frame.shape[:2]
+        oW, oH = zp_out_size(o, W, H)
+        px, py = zp_pan_at(pk, t)
+        out = zp_render(np, cv2, frame, zp_window(W, H, oW, oH, zp_zoom_at(zk, t), px, py), oW, oH)
+        if max(oW, oH) > 960:  # a preview does not need to be big
+            k = 960.0 / max(oW, oH)
+            out = cv2.resize(out, (max(2, int(oW * k)), max(2, int(oH * k))), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".png", out)
+        if not ok:
+            return False
+        buf.tofile(out_png)
+        return True
+    except Exception as e:  # noqa: BLE001
+        write_log(f"zoompan preview failed: {e!r}")
+        return False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@op("Video", "zoompan", "Zoom & Pan",
+    [O("size", "Output size", "choice", ZP_SIZES[0], ZP_SIZES),
+     O("keys", "Zoom and pan markers (use the timeline under the picture)", "text", "")],
+    kind="video", tip="Zoom in and out and pan across the picture at different speeds, set with markers along the length of the video.")
+def b_zoompan(o, c):
+    zk, pk = parse_zoompan(o.get("keys", ""))
+    if not zk and not pk:
+        raise ValueError("Add at least one Zoom or Pan marker first (use the timeline under the picture).")
+    outp = c.out("_zoompan", ".mp4")
+    return [job([], outp, c.dur, func=_zoompan_job(c, o, outp), pc=True)]
+
+
 # Unsharp mask.
 @op("Effects & Colour", "sharpen", "Sharpen", [O("amt", "Strength (0.5-3)", "float", 1.0)])
 def b_sharpen(o, c):
@@ -2695,6 +3092,8 @@ def preview_frame(spec, opts, src, t, out_png):
     """Render ONE frame of what an operation would do (its real filters, no encoding) to a PNG. True on success."""
     if spec["id"] in ("faceblur", "faceblurphoto"):
         return faceblur_preview(opts, src, t, out_png)
+    if spec["id"] == "zoompan":
+        return zoompan_preview(opts, src, t, out_png)
     tmp = tempfile.mkdtemp(prefix="ffprev_")
     try:
         c = Ctx(src, tmp, tmp)
@@ -3139,7 +3538,7 @@ TOOL_ICONS = {"trim": "\u2702", "join": "\U0001F517", "split": "\u2797", "speed"
               "social": "\U0001F4F2", "compress": "\U0001F5DC", "extract": "\U0001F3B5", "loudnorm": "\U0001F50A", "silence": "\U0001F507",
               "volume": "\U0001F50A", "fade": "\U0001F305", "denoise": "\U0001F9F9", "narration": "\U0001F399", "thumb": "\U0001F5BC",
               "frames": "\U0001F39E", "gif": "\U0001F300", "watermark": "\U0001F4A7", "pip": "\U0001F5D7", "slideshow": "\U0001F304",
-              "burnsubs": "\U0001F4AC", "drawtext": "\U0001F524", "timer": "\u23F1", "colour": "\U0001F3A8", "blur": "\U0001F32B", "faceblur": "\U0001F648", "faceblurphoto": "\U0001F648",
+              "burnsubs": "\U0001F4AC", "drawtext": "\U0001F524", "timer": "\u23F1", "colour": "\U0001F3A8", "blur": "\U0001F32B", "faceblur": "\U0001F648", "faceblurphoto": "\U0001F648", "zoompan": "\U0001F50D",
               "bw": "\u26AB", "probe": "\U0001F50D"}
 # Light and dark colour sets; BRAND_* are the accent colours used for headers and the primary button.
 PALETTE = {
@@ -3245,6 +3644,7 @@ TOOL_DOCS = {
     "colour": "Adjust brightness, contrast, saturation and gamma. The defaults give a small, pleasing lift. The dialog shows a preview of the result, and a Play sample button.",
     "lut": "Apply a colour 'look' from a .cube LUT file, like the presets sold for cinematic grading.",
     "blur": "Blur the whole picture. Strength runs from 1 to 30.",
+    "zoompan": "Zoom in and out and move across the picture at different speeds, anywhere along the video. Scrub to a moment on the timeline, then turn the mouse wheel on the picture to zoom and drag to move the gold box: a marker appears in the Zoom or Pan lane. Slide markers left or right to change when things happen, pick one to change its speed style (Smooth, Steady, Slow start, Slow end or Jump) or its exact value, and right-click it to remove it. The picture moves between markers, so the gap between two markers sets how fast it zooms or moves. Press Play preview to watch the move in a separate window (a rough copy, no sound). Output size can keep the video as it is or reframe it, for example vertical for TikTok. The sound is kept.",
     "faceblurphoto": "Looks for faces in a photo and covers each one with a circle or a square: a blur, pixels, a plain black shape or an emoji picture (40 are built in). Size sets how big the cover is compared with the face (150 = a little larger than the face). Press on the After picture and drag outwards to add a cover for a face it missed, or choose which faces to cover. The result is saved next to the original as a new picture in the same format. Black is the safest cover; a light blur or pixelation can sometimes be recognised. No detector finds every face (small, turned-away or hidden faces can be missed), so always check the result before you share it.",
     "faceblur": "Looks for faces in a video, follows each one as it moves and covers it with a circle or a square. Cover faces with a blur, pixels, a plain black shape or an emoji picture (40 are built in). Size sets how big the cover is compared with the face (150 = a little larger than the face). A face that is lost is still covered for the 'keep covering' time (half a second by default). Tick the green boxes option first to check what was found. All sound tracks are kept (re-encoded as AAC); subtitles and chapters are not. Black is the safest cover; a light blur or pixelation can sometimes be recognised. No detector finds every face (small, turned-away or hidden faces can be missed), and a blur does not hide a voice, clothes or a number plate, so always watch the result before you share it. Big videos take much longer than their own length to process.",
     "sharpen": "Make the picture crisper. Strength runs from 0.5 to 3.",
@@ -6454,6 +6854,622 @@ def gui():
             v.trace_add("write", lambda *a: draw())
         return {"canvas": cv, "set_image": set_image, "lock": lock, "draw": draw}
 
+    # ---- Zoom & Pan editor: the whole picture with a gold box (what you keep) at the playhead's moment, plus a timeline with a Zoom lane and a
+    #  Pan lane. Mouse wheel on the picture = zoom, drag = move the box (each writes / updates a marker at the playhead). Markers can be slid
+    #  along the lanes, picked to change their speed style or value, and removed. Everything is stored in the "markers" text box.
+    def zoompan_editor(top_, box, hold, tkvars, pos_var, st, dim, later, before=None, result_lab=None, note=None, src_fn=None):
+        cv = tk.Canvas(hold, highlightthickness=0, bd=0, bg="#101010", cursor="fleur")
+        cv.place(x=0, y=0, relwidth=1, relheight=1)
+        S = {"img": None, "ox": 0, "oy": 0, "drag": None, "sel": None, "tdrag": None, "busy": False}
+        TL_H, PADL, PADR, TOL = 110, 62, 30, 0.05
+        ZY, PY = (24, 62), (66, 104)
+        BLUE = "#4fc3f7"
+        tl = tk.Canvas(box, width=max(300, dim["w"] - 30), height=TL_H, highlightthickness=0, bd=0, bg="#151515")
+        ef = ttk.Frame(box)
+        if before is not None:
+            tl.pack(fill="x", padx=(0, 14), pady=(4, 0), before=before)
+            ef.pack(fill="x", before=before)
+        else:
+            tl.pack(fill="x", padx=(0, 14), pady=(4, 0))
+            ef.pack(fill="x")
+
+        def keys():
+            try:
+                return parse_zoompan(tkvars["keys"].get())
+            except ValueError:
+                return None
+
+        def put(zk, pk):
+            tkvars["keys"].set(format_zoompan(zk, pk))
+
+        def dur():
+            try:
+                return float(st.get("dur_") or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def cur_t():
+            try:
+                f = min(max(0.0, float(pos_var.get())), 1.0)
+            except (tk.TclError, ValueError):
+                f = 0.0
+            return f * dur()
+
+        def set_t(t, fire=True):
+            d = dur()
+            if d > 0:
+                pos_var.set(min(max(0.0, t / d), 1.0))
+                if fire:
+                    later()
+
+        def out_aspect(iw, ih):
+            m = re.match(r"\s*(\d+)\s*x\s*(\d+)", tkvars["size"].get() if "size" in tkvars else "")
+            return (int(m.group(1)), int(m.group(2))) if m else (iw, ih)
+
+        def window_now():
+            img, kz = S["img"], keys()
+            if img is None or kz is None:
+                return None
+            iw, ih = img.width(), img.height()
+            ow, oh = out_aspect(iw, ih)
+            t = cur_t()
+            px, py = zp_pan_at(kz[1], t)
+            return zp_window(iw, ih, ow, oh, zp_zoom_at(kz[0], t), px, py), (iw, ih), zp_zoom_at(kz[0], t)
+
+        # --- change markers (lists so they can be edited, then written back as text)
+        def lists():
+            kz = keys()
+            if kz is None:
+                return None
+            return [list(k) for k in kz[0]], [list(k) for k in kz[1]]
+
+        def upsert(lane, t, vals):
+            ls = lists()
+            if ls is None:
+                return
+            zk, pk = ls
+            L = zk if lane == "Z" else pk
+            before_vals = (zp_zoom_at(zk, t),) if lane == "Z" else zp_pan_at(pk, t)
+            hit = next((k for k in L if abs(k[0] - t) <= TOL), None)
+            if hit is None:
+                if not L and t > TOL:  # first marker of a lane: also keep the starting look until it
+                    L.append([0.0] + list(before_vals) + ["Smooth"])
+                hit = [round(t, 2)] + list(vals) + ["Smooth"]
+                L.append(hit)
+            else:
+                hit[1:1 + len(vals)] = list(vals)
+            L.sort(key=lambda k: k[0])
+            S["sel"] = (lane, round(hit[0], 2))
+            put(zk, pk)
+
+        def sel_marker(ls=None):
+            if not S["sel"]:
+                return None, None
+            ls = ls or lists()
+            if ls is None:
+                return None, None
+            lane, t0 = S["sel"]
+            for k in (ls[0] if lane == "Z" else ls[1]):
+                if abs(k[0] - t0) < 0.006:
+                    return lane, k
+            return None, None
+
+        def remove_sel(*_):
+            ls = lists()
+            lane, k = sel_marker(ls)
+            if k is None:
+                return
+            (ls[0] if lane == "Z" else ls[1]).remove(k)
+            S["sel"] = None
+            put(*ls)
+
+        def clear_all():
+            S["sel"] = None
+            tkvars["keys"].set("")
+
+        # --- the picture with the box
+        def draw_frame():
+            try:
+                cv.delete("all")
+                img = S["img"]
+                if img is None:
+                    cv.create_text(10, 10, anchor="nw", text="loading…", fill="#9aa7b4")
+                    return
+                ox, oy = S["ox"], S["oy"]
+                cv.create_image(ox, oy, image=img, anchor="nw")
+                w = window_now()
+                if w is None:
+                    cv.create_text(ox + 8, oy + 6, anchor="nw", text="The markers box has something that cannot be read", fill="#ff8a80", font=f_small)
+                    return
+                (x0, y0, ww, hh), (iw, ih), z = w
+                X1, Y1, X2, Y2 = ox + x0, oy + y0, ox + x0 + ww, oy + y0 + hh
+                for b in ((ox, oy, ox + iw, Y1), (ox, Y2, ox + iw, oy + ih), (ox, Y1, X1, Y2), (X2, Y1, ox + iw, Y2)):
+                    cv.create_rectangle(*b, fill="#000000", stipple="gray50", outline="")
+                cv.create_rectangle(X1, Y1, X2, Y2, outline=GOLD, width=2)
+                cv.create_text(X1 + 8, Y1 + 6, anchor="nw", text=f"x{z:.2f}", fill="#ffffff", font=f_small)
+            except tk.TclError:
+                pass
+
+        def layout_frame(*_):
+            img = S["img"]
+            if img is not None:
+                S["ox"] = max(0, (cv.winfo_width() - img.width()) // 2)
+                S["oy"] = max(0, (cv.winfo_height() - img.height()) // 2)
+            draw_frame()
+
+        def set_image(path):
+            try:
+                S["img"] = tk.PhotoImage(file=path) if path else None
+            except tk.TclError:
+                S["img"] = None
+            layout_frame()
+            draw_timeline()
+
+        def f_press(e):
+            w = window_now()
+            if w is None:
+                return
+            (x0, y0, ww, hh), _wh, _z = w
+            S["drag"] = {"x": e.x, "y": e.y, "cx": x0 + ww / 2, "cy": y0 + hh / 2}
+
+        def f_drag(e):
+            d, w = S["drag"], window_now()
+            if not d or w is None:
+                return
+            (x0, y0, ww, hh), (iw, ih), _z = w
+            ncx = min(max(ww / 2, d["cx"] + e.x - d["x"]), iw - ww / 2)
+            ncy = min(max(hh / 2, d["cy"] + e.y - d["y"]), ih - hh / 2)
+            upsert("P", cur_t(), (round(ncx / iw * 100, 1), round(ncy / ih * 100, 1)))
+
+        def f_release(_e):
+            S["drag"] = None
+
+        def f_wheel(e):
+            w = window_now()
+            if w is None:
+                return
+            z = w[2] * (1.12 if e.delta > 0 else 1 / 1.12)
+            z = min(max(1.0, z), ZP_MAXZOOM)
+            if abs(z - w[2]) > 1e-6:
+                upsert("Z", cur_t(), (round(z, 3),))
+
+        cv.bind("<ButtonPress-1>", f_press)
+        cv.bind("<B1-Motion>", f_drag)
+        cv.bind("<ButtonRelease-1>", f_release)
+        cv.bind("<MouseWheel>", f_wheel)
+        cv.bind("<Configure>", layout_frame)
+
+        # --- the timeline
+        def tl_w():
+            w_ = tl.winfo_width()
+            return w_ if w_ > 120 else dim["w"]
+
+        def tx(t):
+            return PADL + (tl_w() - PADL - PADR) * (t / (dur() or 1.0))
+
+        def tt(x):
+            return min(max(0.0, (x - PADL) / float(max(1, tl_w() - PADL - PADR)) * dur()), dur())
+
+        def draw_timeline():
+            try:
+                tl.delete("all")
+                d = dur()
+                if d <= 0:
+                    tl.create_text(10, 10, anchor="nw", text="loading…", fill="#9aa7b4", font=f_small)
+                    return
+                span = tl_w() - PADL - PADR
+                step = next((s_ for s_ in (0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600) if span * s_ / d >= 56), 600)
+                t_ = 0.0
+                while t_ <= d + 1e-6:
+                    x = tx(t_)
+                    tl.create_line(x, 14, x, TL_H, fill="#262626")
+                    tl.create_text(x + 3, 1, anchor="nw", text=(f"{int(t_ // 60)}:{int(t_ % 60):02d}" if step >= 1 else f"{t_:.1f}s"), fill="#9aa7b4", font=f_small)
+                    t_ += step
+                for nm, (y0, y1) in (("Zoom", ZY), ("Pan", PY)):
+                    tl.create_rectangle(PADL, y0, tl_w() - PADR, y1, fill="#1d1d1d", outline="#2c2c2c")
+                    tl.create_text(6, (y0 + y1) / 2, anchor="w", text=nm, fill="#cfd8dc", font=f_small)
+                kz = keys()
+                if kz is not None:
+                    for lane, L, (y0, y1), col in (("Z", kz[0], ZY, GOLD), ("P", kz[1], PY, BLUE)):
+                        cy = y0 + 13
+                        if len(L) > 1:
+                            tl.create_line(*[c_ for k in L for c_ in (tx(k[0]), cy)], fill=col, width=1)
+                        for k in L:
+                            x = tx(k[0])
+                            on = S["sel"] == (lane, round(k[0], 2))
+                            tl.create_polygon(x - 7, cy, x, cy - 7, x + 7, cy, x, cy + 7, fill=col, outline="#ffffff" if on else "#1a1a1a", width=2 if on else 1)
+                            tl.create_text(x, y1 - 6, text=(f"x{k[1]:.2g}" if lane == "Z" else f"{k[1]:.0f},{k[2]:.0f}"), fill="#e0e0e0", font=f_small)
+                x = tx(cur_t())
+                tl.create_line(x, 0, x, TL_H, fill="#ff5252", width=2)
+                tl.create_polygon(x - 5, 0, x + 5, 0, x, 8, fill="#ff5252", outline="")
+            except tk.TclError:
+                pass
+
+        def hit_marker(ex, ey):
+            kz = keys()
+            if kz is None:
+                return None, None
+            for lane, L, (y0, y1) in (("Z", kz[0], ZY), ("P", kz[1], PY)):
+                if y0 <= ey <= y1:
+                    for k in L:
+                        if abs(tx(k[0]) - ex) <= 9:
+                            return lane, k
+            return None, None
+
+        def t_press(e):
+            tl.focus_set()
+            lane, k = hit_marker(e.x, e.y)
+            if k is not None:
+                S["sel"] = (lane, round(k[0], 2))
+                S["tdrag"] = ["m", lane, round(k[0], 2)]
+                set_t(k[0])
+            else:
+                S["tdrag"] = ["p"]
+                if e.y > ZY[0] - 2:
+                    S["sel"] = None
+                set_t(tt(e.x))
+            refresh()
+
+        def t_drag(e):
+            d = S["tdrag"]
+            if not d:
+                return
+            if d[0] == "p":
+                set_t(tt(e.x))
+                refresh()
+                return
+            ls = lists()
+            if ls is None:
+                return
+            L = ls[0] if d[1] == "Z" else ls[1]
+            k = next((k_ for k_ in L if abs(k_[0] - d[2]) < 0.006), None)
+            nt = round(tt(e.x), 2)
+            if k is None or nt == d[2] or any(o_ is not k and abs(o_[0] - nt) < 0.01 for o_ in L):
+                return
+            k[0] = nt
+            L.sort(key=lambda k_: k_[0])
+            S["sel"] = (d[1], nt)
+            d[2] = nt
+            put(*ls)
+            set_t(nt)
+
+        def t_release(_e):
+            S["tdrag"] = None
+
+        def t_right(e):
+            lane, k = hit_marker(e.x, e.y)
+            if k is not None:
+                S["sel"] = (lane, round(k[0], 2))
+                remove_sel()
+
+        tl.bind("<ButtonPress-1>", t_press)
+        tl.bind("<B1-Motion>", t_drag)
+        tl.bind("<ButtonRelease-1>", t_release)
+        tl.bind("<Button-3>", t_right)
+        tl.bind("<Button-2>", t_right)
+        tl.bind("<Delete>", remove_sel)
+        tl.bind("<BackSpace>", remove_sel)
+
+        # --- buttons and the selected marker's values
+        def add_zoom():
+            kz = keys()
+            if kz is not None:
+                upsert("Z", cur_t(), (round(zp_zoom_at(kz[0], cur_t()), 3),))
+
+        def add_pan():
+            kz = keys()
+            if kz is not None:
+                px, py = zp_pan_at(kz[1], cur_t())
+                upsert("P", cur_t(), (round(px, 1), round(py, 1)))
+        r1 = ttk.Frame(ef)
+        r1.pack(fill="x", pady=(4, 2))
+        ttk.Button(r1, text="Zoom marker here", command=add_zoom).pack(side="left", padx=(0, 4))
+        ttk.Button(r1, text="Pan marker here", command=add_pan).pack(side="left", padx=(0, 4))
+        ttk.Button(r1, text="Remove marker", command=remove_sel).pack(side="left", padx=(0, 4))
+        ttk.Button(r1, text="Clear all", command=clear_all).pack(side="left")
+        r2 = ttk.Frame(ef)
+        r2.pack(fill="x", pady=(2, 2))
+        play_btn = ttk.Button(r2, text="\u25B6  Play preview", command=lambda: open_player())
+        play_btn.pack(side="right")
+        sel_lbl = ttk.Label(r2, text="Pick a marker on the timeline to change its speed or value.", style="Muted.TLabel")
+        sel_lbl.pack(side="left", padx=(0, 8))
+        ease_var, a_var, b_var = tk.StringVar(value=ZP_EASE[0]), tk.StringVar(), tk.StringVar()
+        r3 = ttk.Frame(ef)
+        r3.pack(fill="x", pady=(0, 2))
+        ttk.Label(r3, text="Speed into it:", style="Muted.TLabel").pack(side="left", padx=(0, 4))
+        ease_cb = ttk.Combobox(r3, textvariable=ease_var, values=ZP_EASE, state="readonly", width=11)
+        ease_cb.pack(side="left", padx=(0, 10))
+        a_lbl = ttk.Label(r3, text="Zoom x", style="Muted.TLabel")
+        a_lbl.pack(side="left", padx=(0, 4))
+        a_ent = ttk.Entry(r3, textvariable=a_var, width=7)
+        a_ent.pack(side="left", padx=(0, 8))
+        b_lbl = ttk.Label(r3, text="Down %", style="Muted.TLabel")
+        b_ent = ttk.Entry(r3, textvariable=b_var, width=7)
+        ttk.Label(ef, text="Scrub, then mouse wheel = zoom, drag = move the box. Right-click a marker to remove it.",
+                  style="Muted.TLabel", wraplength=max(300, dim["w"] - 30), justify="left").pack(anchor="w", pady=(2, 0))
+
+        def edit_ease(*_):
+            if S["busy"]:
+                return
+            ls = lists()
+            lane, k = sel_marker(ls)
+            if k is not None and k[-1] != ease_var.get():
+                k[-1] = ease_var.get()
+                put(*ls)
+
+        def edit_vals(*_):
+            if S["busy"]:
+                return
+            ls = lists()
+            lane, k = sel_marker(ls)
+            if k is None:
+                return
+            try:
+                if lane == "Z":
+                    k[1] = min(max(1.0, float(a_var.get())), ZP_MAXZOOM)
+                else:
+                    k[1], k[2] = min(max(0.0, float(a_var.get())), 100.0), min(max(0.0, float(b_var.get())), 100.0)
+            except ValueError:
+                return
+            put(*ls)
+        ease_cb.bind("<<ComboboxSelected>>", edit_ease)
+        for ent in (a_ent, b_ent):
+            ent.bind("<Return>", lambda e: (edit_vals(), "break")[1])  # Enter applies the value; it must not also press Run
+            ent.bind("<FocusOut>", edit_vals)
+
+        def refresh_controls():
+            S["busy"] = True
+            try:
+                lane, k = sel_marker()
+                if k is None:
+                    sel_lbl.configure(text="Pick a marker on the timeline to change its speed or value.")
+                    for w_ in (ease_cb, a_ent, b_ent):
+                        w_.state(["disabled"])
+                    return
+                for w_ in (ease_cb, a_ent, b_ent):
+                    w_.state(["!disabled"])
+                sel_lbl.configure(text=("Zoom" if lane == "Z" else "Pan") + f" marker at {int(k[0] // 60)}:{k[0] % 60:04.1f}")
+                ease_var.set(k[-1])
+                if lane == "Z":
+                    a_lbl.configure(text="Zoom x")
+                    a_var.set(f"{k[1]:.2f}")
+                    b_lbl.pack_forget()
+                    b_ent.pack_forget()
+                else:
+                    a_lbl.configure(text="Across %")
+                    a_var.set(f"{k[1]:.1f}")
+                    b_var.set(f"{k[2]:.1f}")
+                    b_lbl.pack(side="left", padx=(0, 4))
+                    b_ent.pack(side="left")
+            finally:
+                S["busy"] = False
+
+        def refresh(*_):
+            draw_frame()
+            draw_timeline()
+            refresh_controls()
+
+        def resize(nw):
+            try:
+                tl.configure(width=max(300, nw - 30))
+            except tk.TclError:
+                return
+            draw_timeline()
+        tl.bind("<Configure>", lambda e: draw_timeline())
+        tkvars["keys"].trace_add("write", refresh)
+        if "size" in tkvars:
+            tkvars["size"].trace_add("write", refresh)
+        # --- live preview from a small in-memory copy of the video (no ffmpeg call per move), and the Play window
+        P = {"px": None, "key": None, "img_r": None, "poll": None, "win": None}
+
+        def active():
+            px = P["px"]
+            return px is not None and not px.failed and len(px.frames) > 0
+
+        def fmt_t(t):
+            return f"{int(t // 60)}:{t % 60:04.1f}"
+
+        def result_ppm(t, maxw, maxh):
+            """(ppm of the result at time t, ppm of the whole frame at that time) or None."""
+            px, kz = P["px"], keys()
+            if px is None or kz is None:
+                return None
+            import numpy as np
+            import cv2
+            fr = px.frame(t)
+            if fr is None:
+                return None
+            res = zp_live_result(np, cv2, fr, kz[0], kz[1], t, tkvars["size"].get() if "size" in tkvars else "")
+            return zp_ppm(cv2, res, maxw, maxh), fr
+
+        def live(*_):
+            if not active():
+                return False
+            px, t = P["px"], cur_t()
+            try:
+                if keys() is None:
+                    return False
+                import cv2
+                size_t = tkvars["size"].get() if "size" in tkvars else ""
+                cw_, ch_ = max(80, cv.winfo_width()), max(50, cv.winfo_height())
+                key = (min(max(0, int(t * px.fps + 0.5)), len(px.frames) - 1), round(t, 3), tkvars["keys"].get(), size_t, cw_, ch_, px.done)
+                if key == P["key"]:
+                    return True
+                got = result_ppm(t, dim["w"] - 10, dim["h"] - 5)
+                if got is None:
+                    return False
+                ppm, fr = got
+                S["img"] = tk.PhotoImage(data=zp_ppm(cv2, fr, cw_ - 4, ch_ - 4))
+                P["img_r"] = tk.PhotoImage(data=ppm)
+                if result_lab is not None:
+                    result_lab.configure(image=P["img_r"], text="")
+                if note is not None:
+                    note.configure(text=f"Result at {fmt_t(t)}" + ("" if px.done else f"    (getting the preview ready: {int(px.progress() * 100)}%)"))
+                P["key"] = key
+                layout_frame()
+                return True
+            except (tk.TclError, ValueError, ImportError) as e:
+                write_log(f"zoom and pan live preview: {e!r}")
+                return False
+
+        def poll():
+            P["poll"] = None
+            px = P["px"]
+            if px is None or not top_.winfo_exists():
+                return
+            P["key"] = None
+            live()
+            if not px.done and not px.failed:
+                P["poll"] = top_.after(700, poll)
+
+        def start_proxy(src):
+            if not src or (P["px"] is not None and P["px"].src == src):
+                return
+            if P["px"] is not None:
+                P["px"].stop()
+            P["px"] = ZPProxy(src)
+            P["px"].start()
+            P["poll"] = top_.after(500, poll)
+
+        def open_player():
+            if P["win"] is not None:
+                try:
+                    P["win"].deiconify()
+                    P["win"].lift()
+                    return
+                except tk.TclError:
+                    P["win"] = None
+            if not active():
+                if note is not None:
+                    note.configure(text="The preview is still being prepared - try Play again in a moment.")
+                return
+            PL = {"playing": False, "t": cur_t(), "last": time.monotonic(), "after": None, "busy": False}
+            w = tk.Toplevel(top_)
+            P["win"] = w
+            w.title("Zoom & Pan - preview")
+            w.transient(top_)
+            body = ttk.Frame(w, padding=10)
+            body.pack(fill="both", expand=True)
+            MW, MH = 720, 420
+            stage = tk.Frame(body, width=MW, height=MH, bg="#101010")
+            stage.pack()
+            stage.pack_propagate(False)
+            pic = tk.Label(stage, bg="#101010", bd=0)
+            pic.pack(expand=True)
+            ctr = ttk.Frame(body)
+            ctr.pack(fill="x", pady=(8, 0))
+            tvar = tk.DoubleVar(value=PL["t"])
+            btn = ttk.Button(ctr, text="\u25B6  Play", width=10)
+            btn.pack(side="left")
+            ttk.Button(ctr, text="\u23EE", width=3, command=lambda: seek(0.0)).pack(side="left", padx=(4, 8))
+            tlab = ttk.Label(ctr, text="", style="Muted.TLabel", width=16)
+            sc = ttk.Scale(ctr, from_=0.0, to=max(0.1, dur()), variable=tvar, orient="horizontal", command=lambda v: seek(float(v), from_scale=True))
+            loop_v, spd_v = tk.BooleanVar(value=False), tk.StringVar(value="1x")
+            ttk.Checkbutton(ctr, text="Loop", variable=loop_v).pack(side="right")
+            ttk.Combobox(ctr, textvariable=spd_v, values=["0.25x", "0.5x", "1x", "2x", "4x"], state="readonly", width=5).pack(side="right", padx=(0, 8))
+            tlab.pack(side="left", padx=(0, 8))
+            sc.pack(side="left", fill="x", expand=True, padx=(0, 10))
+            ttk.Label(body, text="A rough, small copy so it plays smoothly. The saved video is full quality (and keeps its sound). "
+                                 "You can keep editing the markers while this is open.", style="Muted.TLabel", wraplength=MW, justify="left").pack(anchor="w", pady=(6, 0))
+
+            def draw(t):
+                px = P["px"]
+                try:
+                    got = result_ppm(t, MW - 4, MH - 4)
+                    if got is not None:
+                        PL["img"] = tk.PhotoImage(data=got[0])
+                        pic.configure(image=PL["img"])
+                    tlab.configure(text=f"{fmt_t(t)} / {fmt_t(dur())}" + ("" if (px is None or px.done) else "  ..."))
+                    PL["busy"] = True
+                    tvar.set(t)
+                    PL["busy"] = False
+                    set_t(t, fire=False)  # the red line on the main timeline follows
+                except tk.TclError:
+                    pass
+
+            def tick():
+                PL["after"] = None
+                if not w.winfo_exists():
+                    return
+                now = time.monotonic()
+                if PL["playing"]:
+                    try:
+                        sp = float(spd_v.get().rstrip("x"))
+                    except ValueError:
+                        sp = 1.0
+                    t = PL["t"] + (now - PL["last"]) * sp
+                    if t >= dur():
+                        if loop_v.get():
+                            t = 0.0
+                        else:
+                            t = dur()
+                            set_play(False)
+                    PL["t"] = t
+                PL["last"] = now
+                draw(PL["t"])
+                if PL["playing"]:
+                    PL["after"] = w.after(40, tick)
+
+            def set_play(on):
+                PL["playing"] = on
+                PL["last"] = time.monotonic()
+                btn.configure(text="\u23F8  Pause" if on else "\u25B6  Play")
+                if on:
+                    if dur() > 0 and PL["t"] >= dur() - 0.05:
+                        PL["t"] = 0.0
+                    if PL["after"] is None:
+                        PL["after"] = w.after(1, tick)
+
+            def seek(t, from_scale=False):
+                if from_scale and PL["busy"]:
+                    return
+                PL["t"] = min(max(0.0, t), dur())
+                PL["last"] = time.monotonic()
+                if not PL["playing"]:
+                    draw(PL["t"])
+
+            def redraw_after_edit(*_):
+                if P["win"] is not None and w.winfo_exists() and not PL["playing"]:
+                    draw(PL["t"])
+
+            def close():
+                PL["playing"] = False
+                if PL["after"]:
+                    try:
+                        w.after_cancel(PL["after"])
+                    except tk.TclError:
+                        pass
+                P["win"] = None
+                try:
+                    w.destroy()
+                except tk.TclError:
+                    pass
+            btn.configure(command=lambda: set_play(not PL["playing"]))
+            w.protocol("WM_DELETE_WINDOW", close)
+            w.bind("<space>", lambda e: set_play(not PL["playing"]))
+            for nm in ("keys", "size"):
+                if nm in tkvars:
+                    tkvars[nm].trace_add("write", redraw_after_edit)
+            try:
+                w.update_idletasks()
+                x = top_.winfo_rootx() + top_.winfo_width() + 8
+                if x + w.winfo_reqwidth() > w.winfo_screenwidth():
+                    x = max(0, w.winfo_screenwidth() - w.winfo_reqwidth() - 8)
+                w.geometry(f"+{x}+{max(0, top_.winfo_rooty())}")
+            except tk.TclError:
+                pass
+            draw(PL["t"])
+            set_play(True)
+
+        def on_destroy(e):
+            if e.widget is top_ and P["px"] is not None:
+                P["px"].stop()
+        top_.bind("<Destroy>", on_destroy, add="+")
+
+        pos_var.trace_add("write", lambda *a: (live() or draw_frame(), draw_timeline()))
+        refresh()
+        return {"set_image": set_image, "refresh": refresh, "resize": resize, "live": live, "active": active, "start_proxy": start_proxy}
+
     def attach_preview(top_, frm, spec, getters, tkvars, nrows):
         def cur_src(raw=None):
             src_ = preview_source()
@@ -6513,10 +7529,10 @@ def gui():
             return
         strip_cfg = STRIP_OPS.get(spec["id"])
         is_trim = spec["id"] == "trim"
-        dim = {"w": 560, "h": 315} if (is_trim or spec["id"] == "crop") else {"w": 430, "h": 245}  # picture slot size; Trim gets a bigger one and follows the window size
+        dim = {"w": 560, "h": 315} if (is_trim or spec["id"] == "crop") else ({"w": 480, "h": 185} if spec["id"] == "zoompan" else {"w": 430, "h": 245})  # picture slot size; Trim gets a bigger one and follows the window size
         holds = []
         base_w, base_h = dim["w"], dim["h"]
-        names = ["Preview (the handle you moved last)"] if is_trim else (["Result of the crop"] if spec["id"] == "crop" else (["First clip", "Second clip (joined after it)"] if spec["id"] in ("join", "crossfade") else ["Before", "After (this is what the result will look like)"]))
+        names = ["Frame: the gold box is what you keep. Drag to move it, mouse wheel to zoom.", "Result at this moment"] if spec["id"] == "zoompan" else ["Preview (the handle you moved last)"] if is_trim else (["Result of the crop"] if spec["id"] == "crop" else (["First clip", "Second clip (joined after it)"] if spec["id"] in ("join", "crossfade") else ["Before", "After (this is what the result will look like)"]))
         labels = []
         name_lbl = None
         for nm in names:
@@ -6531,6 +7547,7 @@ def gui():
             labels.append(lab)
         # Crop: a draggable box over the full picture (drag to move, squares to resize, wheel to grow/shrink).
         crop_ed = None
+        zp_ed = None
         if spec["id"] == "crop" and all(k in tkvars for k in ("w", "h", "x", "y")):
             crop_ed = crop_editor(holds[0], tkvars)
             view = tk.StringVar(value="move")
@@ -6743,6 +7760,21 @@ def gui():
                     else:
                         paths.append(None)
                         msg = "Add at least one more clip to join."
+                elif spec["id"] == "zoompan":
+                    t0 = (raw["__f"] * dur) if (raw.get("__f") is not None and dur) else (dur / 3 if dur else 0)
+                    t0 = min(max(0.0, t0), max(0.0, dur - 0.2)) if dur else 0
+                    f0, f1 = os.path.join(tmpd, f"b{n}.png"), os.path.join(tmpd, f"a{n}.png")
+                    paths.append(f0 if grab_frame(src, t0, f0, box=(raw["__w"] - 10, raw["__h"] - 5)) else None)
+                    try:
+                        o2 = convert_opts(spec, raw)
+                    except ValueError:
+                        o2 = None
+                    if o2 is not None and preview_frame(spec, o2, src, t0, f1):
+                        paths.append(f1)
+                        msg = f"Result at {int(t0 // 60)}:{t0 % 60:04.1f}"
+                    else:
+                        paths.append(None)
+                        msg = "Move along the timeline and add markers to see the result."
                 elif spec["id"] != "crop":
                     t0 = raw["__t"] if raw.get("__t") is not None else ((raw["__f"] * dur) if (raw.get("__f") is not None and dur) else (dur / 3 if dur else 0))
                     t0 = min(max(0.0, t0), max(0.0, dur - 0.2)) if dur else 0
@@ -6785,6 +7817,13 @@ def gui():
         def show(n, paths, msg):
             if n != st["n"] or not top_.winfo_exists():
                 return
+            if zp_ed is not None:
+                try:
+                    zp_ed["start_proxy"](cur_src())
+                except Exception as e:  # noqa: BLE001
+                    write_log(f"zoom and pan preview copy: {e!r}")
+                if zp_ed["active"]() and zp_ed["live"]():
+                    return
             st["imgs"] = []
             loaded = []
             for pth in paths + [None] * (len(labels) - len(paths)):
@@ -6808,6 +7847,8 @@ def gui():
             note.configure(text=msg)
             if crop_ed is not None:
                 crop_ed["set_image"](paths[1] if len(paths) > 1 else None, st.get("srcwh"))
+            if zp_ed is not None:
+                zp_ed["set_image"](paths[0] if paths else None)
 
         def kick():
             st["after"] = None
@@ -6826,6 +7867,8 @@ def gui():
             threading.Thread(target=work, args=(st["n"], raw), daemon=True).start()
 
         def later(*_):
+            if zp_ed is not None and zp_ed["live"]():  # Zoom & Pan: drawn at once from the in-memory copy
+                return
             if st["after"]:
                 try:
                     top_.after_cancel(st["after"])
@@ -6833,6 +7876,12 @@ def gui():
                     pass
             st["after"] = top_.after(200 if strip_cfg else (350 if pos_var is not None else 600), kick)
         pos_cb["f"] = later
+        if spec["id"] == "zoompan" and pos_var is not None and "keys" in tkvars:
+            try:
+                zp_ed = zoompan_editor(top_, box, holds[0], tkvars, pos_var, st, dim, later, before=note, result_lab=labels[1], note=note, src_fn=cur_src)
+                st["resize_tl"] = zp_ed["resize"]
+            except Exception as e:  # noqa: BLE001
+                write_log(f"zoom and pan editor setup failed: {e!r}")
 
         # Trim only: the dialog can be stretched. Everything extra goes to the preview and the
         #  film strip (the picture is re-made at the new size, the strip is re-tiled wider).
@@ -7400,6 +8449,8 @@ def selftest():
             continue
         src = {"image": pic, "audio": music, "sub": srt}.get(spec["kind"], clip)
         raw = default_opts(spec)
+        if spec["id"] == "zoompan":  # needs markers to do anything
+            raw["keys"] = "Z 0 1; Z 1 2 slow end; P 0 50 50; P 1 30 40 steady"
         assets = {"audio": music, "image": pic, "sub": srt, "lut": cube, "video": clip, "any": music}
         for s in spec["opts"]:
             if s["type"] == "file" and not (spec["id"] == "chroma" and s["key"] == "bgimg"):
