@@ -4,7 +4,7 @@ All notable changes to O.M. Video Studio. Newest first. Downloads for every vers
 
 ## 1.21.0 - 2026-11-27
 
-**Trim can keep several sections.** In Trim / cut, press "Keep another section" to mark more parts of the same video; they show as blue bands on the film strip, click one to edit it, and "Remove this section" drops the one you are editing. When you run it the kept sections are cut out and joined in time order (overlapping ones are merged). You can also type them in "More sections to keep", like 1:00-1:30; 2:00-2:20. Several sections are always re-encoded.
+**Trim can keep several sections.** In Trim / cut, press "Keep another section" to mark more parts of the same video; they show as blue bands on the film strip, click one to edit it, and "Remove this section" drops the one you are editing. When you run it the kept sections are cut out and joined in time order (overlapping ones are merged). You can also type them in "More sections to keep", like 1:00-1:30; 2:00-2:20. Several sections are always re-encoded. The film strip sits along the bottom of the window and shows kept parts in green and cut parts in red. A section list under it (click a row to edit that section), **Invert** (mark what to throw away, then swap), **Undo / Redo** (Ctrl+Z / Ctrl+Y), keyboard shortcuts (Space play/pause, I / O set start / end, N new section, arrows nudge a frame, Shift = 1 s) and **Preview all kept sections** (plays the joined result with sound).
 
 ## 1.20.0 - 2026-11-19
 

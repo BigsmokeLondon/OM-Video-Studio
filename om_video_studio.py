@@ -525,6 +525,26 @@ def merge_ranges(rngs):
     return out
 
 
+def multi_filter(rngs, has_a, small=False):
+    """filter_complex that cuts every (start, end) out of input 0 and joins them in order. small=True scales to 360p (quick preview)."""
+    n = len(rngs)
+    fc = []
+    for i, (a, b) in enumerate(rngs):
+        fc.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{i}]")
+        if has_a:
+            fc.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{i}]")
+    if has_a:
+        fc.append("".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]")
+        maps, au = ["-map", "[v]", "-map", "[a]"], AAC
+    else:
+        fc.append("".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[v]")
+        maps, au = ["-map", "[v]"], []
+    if small:
+        fc.append("[v]scale=-2:360[vs]")
+        maps[1] = "[vs]"
+    return ";".join(fc), maps, au
+
+
 @op("Video", "trim", "Trim / cut by time",
     [O("start", "Start (hh:mm:ss or seconds)", default="0"), O("end", "End (blank = to the end)", default=""),
      O("more", "More sections to keep (start-end; start-end)", default=""),
@@ -541,20 +561,9 @@ def b_trim(o, c):
         if o["mode"].startswith("Copy"):
             return [job(["-ss", f"{s}", "-i", c.src, "-t", f"{d}", "-c", "copy", "-avoid_negative_ts", "make_zero"], c.out("_trim"), d)]
         return [job(["-ss", f"{s}", "-i", c.src, "-t", f"{d}"] + vcodec() + AAC, c.out("_trim", ".mp4"), d)]
-    n = len(rngs)
     total = sum(b - a for a, b in rngs)
-    fc = []
-    for i, (a, b) in enumerate(rngs):
-        fc.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{i}]")
-        if c.has_a:
-            fc.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{i}]")
-    if c.has_a:
-        fc.append("".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]")
-        maps, au = ["-map", "[v]", "-map", "[a]"], AAC
-    else:
-        fc.append("".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[v]")
-        maps, au = ["-map", "[v]"], []
-    return [job(["-i", c.src, "-filter_complex", ";".join(fc)] + maps + vcodec() + au, c.out("_trim", ".mp4"), total)]
+    fc, maps, au = multi_filter(rngs, c.has_a)
+    return [job(["-i", c.src, "-filter_complex", fc] + maps + vcodec() + au, c.out("_trim", ".mp4"), total)]
 
 
 # Join: concat filter over the selected file plus the extra clips; every clip is scaled/padded to the first clip's size, 30 fps, stereo 48 kHz, then re-encoded.
@@ -3166,7 +3175,7 @@ def ff_version():
 # One plain-English description per tool (shown in the About window and in docs/ABOUT.md). Keys are the tool ids.
 TOOL_DOCS = {
     # ---- Video
-    "trim": "Cut one section out of a video, or keep several and join them: press 'Keep another section' on the film strip (or type them in 'More sections', like 1:00-1:30; 2:00-2:20). Blue bands are the other kept sections; click one to edit it. Sections are joined in time order (always re-encoded). Type a start and end time (hh:mm:ss or plain seconds); leave End blank to go to the end. 'Re-encode' gives a frame-exact cut, 'Copy' is instant but cuts on the nearest keyframe. A film strip with draggable handles, a live preview and a Play selection button help you find the exact moment. Fill screen (or F11) makes the window as big as your screen.",
+    "trim": "Cut one section out of a video, or keep several and join them: press 'Keep another section' on the film strip (or type them in 'More sections', like 1:00-1:30; 2:00-2:20). Kept parts show green and cut parts red; click a green band or a row in the section list to edit it. Invert swaps kept and cut, Undo/Redo (Ctrl+Z / Ctrl+Y) steps back, Space plays, I / O set the start / end, N adds a section, and 'Preview all kept sections' plays the joined result. Sections are joined in time order (always re-encoded). Type a start and end time (hh:mm:ss or plain seconds); leave End blank to go to the end. 'Re-encode' gives a frame-exact cut, 'Copy' is instant but cuts on the nearest keyframe. A film strip with draggable handles, a live preview and a Play selection button help you find the exact moment. Fill screen (or F11) makes the window as big as your screen.",
     "join": "Join several clips into one video, in the order listed. Leave the Input box empty and add all your clips (or a whole folder) in the dialog, or pick a first clip and append the rest. A clip timeline lets you reorder them; everything is scaled to the first clip's size.",
     "split": "Cut a long video into equal-length parts, for example 59 seconds each for Shorts and Reels. Choose 'Re-encode' for exact lengths or 'Copy' for a fast cut on keyframes.",
     "speed": "Slow motion or time-lapse for the whole clip. 0.5 is half speed, 2 is twice as fast. The sound is speeded or slowed to match, without changing its pitch.",
@@ -5312,6 +5321,13 @@ def gui():
                     p_.terminate()
                 except OSError:
                     pass
+            if not keep:
+                ap_ = play.pop("all", None)
+                if ap_ is not None and ap_.poll() is None:
+                    try:
+                        ap_.terminate()
+                    except OSError:
+                        pass
 
         def play_sel(start=None):
             stop_play()
@@ -5340,6 +5356,48 @@ def gui():
                 tick()
             except OSError as e:
                 messagebox.showinfo(APP, f"Couldn't start the player: {e}", parent=top_)
+        def play_all():
+            """Build a small quick copy of the joined result (all kept sections) and play it with sound."""
+            src = cur_src()
+            if not MORE or not src or S["dur"] <= 0:
+                messagebox.showinfo(APP, "Choose a video first (and wait for the film strip to appear).", parent=top_)
+                return
+            ff = find_tool("ffplay") or str(Path(FFMPEG).with_name("ffplay" + (".exe" if os.name == "nt" else "")))
+            if not (os.path.exists(ff) or shutil.which(ff)):
+                messagebox.showinfo(APP, "ffplay (the player that comes with ffmpeg) was not found, so the result can't be played here.", parent=top_)
+                return
+            stop_play()
+            rngs = merge_ranges(extras() + [times()])
+            out_ = os.path.join(tempfile.gettempdir(), f"om_preview_{os.getpid()}.mp4")
+            abtn.configure(text="Building preview…", state="disabled")
+
+            def build():
+                err = ""
+                try:
+                    fc, maps, au = multi_filter(rngs, bool(probe(src)["has_a"]), small=True)
+                    r = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", src, "-filter_complex", fc] + maps +
+                                       ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "32", "-pix_fmt", "yuv420p"] + au + [out_],
+                                       capture_output=True, text=True, creationflags=NO_WINDOW)
+                    if r.returncode != 0 or not os.path.exists(out_):
+                        err = (r.stderr or "ffmpeg failed")[-300:]
+                except Exception as e:  # noqa: BLE001
+                    err = repr(e)
+
+                def done():
+                    if not alive():
+                        return
+                    abtn.configure(text="▶  Preview all kept sections", state="normal")
+                    if err:
+                        messagebox.showinfo(APP, f"Couldn't build the preview:\n{err}", parent=top_)
+                        return
+                    try:
+                        play["all"] = subprocess.Popen([ff, "-hide_banner", "-loglevel", "error", "-autoexit", "-x", "960",
+                                                        "-window_title", "All kept sections - close this window to stop", out_], creationflags=NO_WINDOW)
+                    except OSError as e:
+                        messagebox.showinfo(APP, f"Couldn't start the player: {e}", parent=top_)
+                q_.put(("call", done))
+            threading.Thread(target=build, daemon=True).start()
+
         brow = ttk.Frame(box)
         brow.pack(fill="x", pady=(0, 6))
         ttk.Button(brow, text="▶  Play selection (with sound)", command=play_sel).pack(side="left")
@@ -5372,9 +5430,57 @@ def gui():
                 t = max(t, s_ + 0.1)
                 tkvars[KB].set("" if (cfg["blank"] and t >= S["dur"] - 0.05) else FMT[cfg["fb"]](t if cfg["blank"] else min(t, S["dur"] - 0.1)))
         if MORE:
-            ttk.Label(box, text="Green = kept sections   |   Gold = the section you are editing (kept)   |   Red = CUT out", style="Muted.TLabel", wraplength=pw).pack(anchor="w", pady=(0, 4))
             ttk.Button(brow2, text="+ Keep another section", command=lambda: add_section()).pack(side="left", padx=(6, 0))
             ttk.Button(brow2, text="Remove this section", command=lambda: remove_section()).pack(side="left", padx=(6, 0))
+            ttk.Button(brow2, text="Invert (cut these, keep the rest)", command=lambda: invert()).pack(side="left", padx=(6, 0))
+            brow3 = ttk.Frame(box)
+            brow3.pack(fill="x", pady=(0, 6))
+            ttk.Button(brow3, text="↶ Undo", command=lambda: undo()).pack(side="left")
+            ttk.Button(brow3, text="↷ Redo", command=lambda: redo()).pack(side="left", padx=(6, 0))
+            abtn = ttk.Button(brow3, text="▶  Preview all kept sections", command=lambda: play_all())
+            abtn.pack(side="left", padx=(6, 0))
+            ttk.Label(box, text="Green = kept sections   |   Gold = the section you are editing (kept)   |   Red = CUT out", style="Muted.TLabel", wraplength=pw).pack(anchor="w", pady=(0, 2))
+            ttk.Label(box, text="Keys: Space play/pause  |  I / O = start / end at the pointer (or the paused marker)  |  N = keep another section  |  ← / → = nudge the last handle one frame (Shift = 1 s)  |  Ctrl+Z / Ctrl+Y = undo / redo",
+                      style="Muted.TLabel", wraplength=pw).pack(anchor="w", pady=(0, 4))
+            slist = ttk.Treeview(box, columns=("n", "start", "end", "len"), show="headings", height=4, selectmode="browse")
+            for col_, txt_, w_ in (("n", "#", 40), ("start", "Start", 120), ("end", "End", 120), ("len", "Length", 120)):
+                slist.heading(col_, text=txt_)
+                slist.column(col_, width=w_, anchor="w")
+            slist.pack(fill="x", pady=(0, 4))
+            SL = {"rows": [], "busy": False}
+
+            def refresh_list():
+                if not alive() or S["dur"] <= 0:
+                    return
+                SL["busy"] = True
+                try:
+                    slist.delete(*slist.get_children())
+                    SL["rows"] = all_sections()
+                    for n_, (a_, b_, k_) in enumerate(SL["rows"]):
+                        slist.insert("", "end", iid=str(n_), values=(n_ + 1, fmt_ms(a_), fmt_ms(b_) if b_ < S["dur"] - 0.05 else "end", fmt_ms(b_ - a_) + ("   (editing)" if k_ is None else "")))
+                        if k_ is None:
+                            slist.selection_set(str(n_))
+                finally:
+                    SL["busy"] = False
+
+            def pick_row(_e=None):
+                if SL["busy"]:
+                    return
+                sel = slist.selection()
+                if not sel:
+                    return
+                a_, b_, k_ = SL["rows"][int(sel[0])]
+                if k_ is None:
+                    return  # already the one being edited
+                prev = snap()
+                ex = extras()
+                s0, e0 = times()
+                ex[k_] = (s0, e0)
+                put_extras(ex)
+                set_active(a_, b_)
+                push(prev)
+            slist.bind("<<TreeviewSelect>>", pick_row)
+            st["refresh_list"] = refresh_list
         if not WINDOW:
             ttk.Button(brow2, text="Start here", command=lambda: set_here("a")).pack(side="left", padx=(6, 0))
             ttk.Button(brow2, text="End here", command=lambda: set_here("b")).pack(side="left", padx=(6, 0))
@@ -5495,22 +5601,81 @@ def gui():
             tkvars[KA].set(fmt_ms(a))
             tkvars[KB].set("" if b >= S["dur"] - 0.05 else fmt_ms(b))
 
+        H = {"undo": [], "redo": [], "drag0": None}
+        SL_LAST = {}
+
+        def snap():
+            return (tkvars[KA].get(), tkvars[KB].get(), tkvars["more"].get()) if MORE else None
+
+        def push(prev):
+            """Remember the state from before a change so Undo can bring it back."""
+            if MORE and prev is not None and prev != snap():
+                H["undo"].append(prev)
+                del H["undo"][:-100]
+                H["redo"].clear()
+
+        def restore(sn):
+            tkvars["more"].set(sn[2])
+            tkvars[KA].set(sn[0])
+            tkvars[KB].set(sn[1])
+
+        def undo(*_):
+            if MORE and H["undo"]:
+                H["redo"].append(snap())
+                restore(H["undo"].pop())
+
+        def redo(*_):
+            if MORE and H["redo"]:
+                H["undo"].append(snap())
+                restore(H["redo"].pop())
+
         def add_section():
             if S["dur"] <= 0:
                 return
+            prev = snap()
             s_, e_ = times()
             put_extras(extras() + [(s_, e_)])
             ln = max(0.5, e_ - s_)
             a = e_ if e_ < S["dur"] - 0.5 else max(0.0, s_ - ln)  # the new one starts where the last ended (or before it, at the end of the clip)
             set_active(a, min(S["dur"], a + ln))
+            push(prev)
 
         def remove_section():
             ex = extras()
             if not ex:
                 return
+            prev = snap()
             a, b = ex.pop()  # the last extra section takes the place of the active one
             put_extras(ex)
             set_active(a, b)
+            push(prev)
+
+        def invert():
+            """Cut what is kept and keep what is cut (so you can mark the bits to throw away)."""
+            if S["dur"] <= 0:
+                return
+            prev = snap()
+            kept = merge_ranges(extras() + [times()])
+            gaps, p_ = [], 0.0
+            for a_, b_ in kept:
+                if a_ - p_ >= 0.1:
+                    gaps.append((p_, a_))
+                p_ = max(p_, b_)
+            if S["dur"] - p_ >= 0.1:
+                gaps.append((p_, S["dur"]))
+            if not gaps:
+                messagebox.showinfo(APP, "Everything is kept, so there is nothing left to swap to.", parent=top_)
+                return
+            put_extras(gaps[1:])
+            set_active(*gaps[0])
+            push(prev)
+
+        def all_sections():
+            """[(start, end, extras index or None for the one being edited)] in time order."""
+            rows = [(a_, b_, k_) for k_, (a_, b_) in enumerate(extras())]
+            s_, e_ = times()
+            rows.append((s_, e_, None))
+            return sorted(rows, key=lambda r: (r[0], r[1]))
 
         def view():
             """The part of the file on show (seconds): all of it unless the audio waveform is zoomed in."""
@@ -5601,6 +5766,11 @@ def gui():
             cv.create_rectangle(cx - tw / 2, ly0, cx + tw / 2, ly0 + lh, fill="#000000", outline=BRAND_GOLD)
             cv.create_text(cx, ly0 + lh / 2, text=txt, fill=BRAND_GOLD, font=f_base)
             draw_ph()
+            if MORE and st.get("refresh_list"):
+                key_ = (tkvars[KA].get(), tkvars[KB].get(), tkvars["more"].get())
+                if SL_LAST.get("k") != key_:  # only rebuild the list when the sections changed
+                    SL_LAST["k"] = key_
+                    st["refresh_list"]()
 
         # Moving play marker: a green line with the time, so you can hear where to cut (the player starts about a quarter of a second late).
         PH, PHT = "#22c55e", "#86efac"  # green marker
@@ -5681,11 +5851,14 @@ def gui():
                 ex = extras()
                 for k_, (a_, b_) in enumerate(ex):
                     if a_ <= t <= b_:  # clicked another kept section: make it the one being edited
+                        prev = snap()
                         ex[k_] = (s_, e_)
                         put_extras(ex)
                         set_active(a_, b_)
+                        push(prev)
                         return
             S["drag"] = "start" if ds <= de else "end"
+            H["drag0"] = snap()
             move(e)
 
         def move(e):
@@ -5714,6 +5887,9 @@ def gui():
 
         def release(e):
             S["drag"] = None
+            if MORE and H.get("drag0") is not None:
+                push(H["drag0"])  # one Undo step per drag
+                H["drag0"] = None
 
         cv.bind("<ButtonPress-1>", press)
         cv.bind("<B1-Motion>", move)
@@ -5722,6 +5898,64 @@ def gui():
         cv.bind("<Leave>", lambda e: cv.delete("hov"))
         for v in (tkvars[KA], tkvars[KB]) + ((tkvars["more"],) if MORE else ()):
             v.trace_add("write", track)
+
+        if MORE:
+            def typing():
+                try:
+                    return top_.focus_get().winfo_class() in ("TEntry", "Entry", "TCombobox", "Combobox", "Text", "TSpinbox")
+                except (KeyError, AttributeError, tk.TclError):
+                    return False
+
+            def key_time():
+                if play.get("hold") is not None:
+                    return play["hold"]
+                return t_of(S["mx"]) if S.get("mx") is not None else None
+
+            def mark(which):
+                t = key_time()
+                if t is None or S["dur"] <= 0:
+                    return
+                prev = snap()
+                s_, e_ = times()
+                if which == "a":
+                    tkvars[KA].set(fmt_ms(min(t, max(0.0, e_ - 0.1))))
+                else:
+                    t = max(t, s_ + 0.1)
+                    tkvars[KB].set("" if t >= S["dur"] - 0.05 else fmt_ms(t))
+                push(prev)
+
+            def nudge(sign, e):
+                if S["dur"] <= 0:
+                    return
+                step = (1.0 if (e.state & 1) else 0.04) * sign
+                prev = snap()
+                s_, e_ = times()
+                if st.get("focus") == "end":
+                    t = min(max(e_ + step, s_ + 0.1), S["dur"])
+                    tkvars[KB].set("" if t >= S["dur"] - 0.05 else fmt_ms(t))
+                else:
+                    tkvars[KA].set(fmt_ms(min(max(s_ + step, 0.0), max(0.0, e_ - 0.1))))
+                push(prev)
+
+            def guarded(fn):
+                def h(e):
+                    try:
+                        fc_ = top_.focus_get().winfo_class()
+                    except (KeyError, AttributeError, tk.TclError):
+                        fc_ = ""
+                    if typing() or fc_ in ("Treeview", "TScale", "Scale", "TButton", "Button"):
+                        return None  # those widgets use these keys themselves
+                    fn(e)
+                    return "break"
+                return h
+            top_.bind("<Key-i>", guarded(lambda e: mark("a")), add="+")
+            top_.bind("<Key-o>", guarded(lambda e: mark("b")), add="+")
+            top_.bind("<Key-n>", guarded(lambda e: add_section()), add="+")
+            top_.bind("<Key-space>", guarded(lambda e: pause_or_resume() if (play["proc"] is not None or play.get("hold") is not None) else play_sel()), add="+")
+            top_.bind("<Left>", guarded(lambda e: nudge(-1, e)), add="+")
+            top_.bind("<Right>", guarded(lambda e: nudge(1, e)), add="+")
+            top_.bind("<Control-z>", lambda e: (undo(), "break")[1], add="+")
+            top_.bind("<Control-y>", lambda e: (redo(), "break")[1], add="+")
 
         def install(png, dur, sw, sh):
             if not alive():
