@@ -5372,7 +5372,7 @@ def gui():
                 t = max(t, s_ + 0.1)
                 tkvars[KB].set("" if (cfg["blank"] and t >= S["dur"] - 0.05) else FMT[cfg["fb"]](t if cfg["blank"] else min(t, S["dur"] - 0.1)))
         if MORE:
-            ttk.Label(box, text="Green = kept sections   |   Gold = the section you are editing (kept)   |   Dark red = CUT out", style="Muted.TLabel", wraplength=pw).pack(anchor="w", pady=(0, 4))
+            ttk.Label(box, text="Green = kept sections   |   Gold = the section you are editing (kept)   |   Red = CUT out", style="Muted.TLabel", wraplength=pw).pack(anchor="w", pady=(0, 4))
             ttk.Button(brow2, text="+ Keep another section", command=lambda: add_section()).pack(side="left", padx=(6, 0))
             ttk.Button(brow2, text="Remove this section", command=lambda: remove_section()).pack(side="left", padx=(6, 0))
         if not WINDOW:
@@ -5571,12 +5571,9 @@ def gui():
                     xa, xb = min(max(x_of(a_), lo_), hi_), min(max(x_of(b_), lo_), hi_)
                     if xb - xa < 1:
                         continue
-                    cv.create_rectangle(xa, RULER, xb, h_, fill="#000000", stipple="gray75", outline="#ef4444", width=1)
+                    cv.create_rectangle(xa, RULER, xb, h_, outline="#ef4444", width=2)
                     if xb - xa > 34:
                         cv.create_text((xa + xb) / 2, RULER + S["th"] / 2, text="CUT", fill="#fca5a5", font=f_base)
-                for a_, b_ in kept:  # kept parts get a green tint
-                    xa, xb = min(max(x_of(a_), lo_), hi_), min(max(x_of(b_), lo_), hi_)
-                    cv.create_rectangle(xa, RULER, xb, h_, fill="#22c55e", stipple="gray25", outline="")
                 for k_, (a_, b_) in enumerate(ex):
                     xa, xb = min(max(x_of(a_), lo_), hi_), min(max(x_of(b_), lo_), hi_)
                     cv.create_rectangle(xa, RULER, xb, h_, outline="#22c55e", width=3)
