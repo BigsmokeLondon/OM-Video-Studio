@@ -6363,16 +6363,16 @@ def gui():
         cv = tk.Canvas(hold, highlightthickness=0, bd=0, bg="#101010", cursor="fleur")
         cv.place(x=0, y=0, relwidth=1, relheight=1)
         S = {"img": None, "ox": 0, "oy": 0, "drag": None, "sel": None, "tdrag": None, "busy": False}
-        TL_H, PADL, PADR, TOL = 110, 62, 16, 0.05
+        TL_H, PADL, PADR, TOL = 110, 62, 30, 0.05
         ZY, PY = (24, 62), (66, 104)
         BLUE = "#4fc3f7"
-        tl = tk.Canvas(box, width=dim["w"], height=TL_H, highlightthickness=0, bd=0, bg="#151515")
+        tl = tk.Canvas(box, width=max(300, dim["w"] - 30), height=TL_H, highlightthickness=0, bd=0, bg="#151515")
         ef = ttk.Frame(box)
         if before is not None:
-            tl.pack(fill="x", pady=(4, 0), before=before)
+            tl.pack(fill="x", padx=(0, 14), pady=(4, 0), before=before)
             ef.pack(fill="x", before=before)
         else:
-            tl.pack(fill="x", pady=(4, 0))
+            tl.pack(fill="x", padx=(0, 14), pady=(4, 0))
             ef.pack(fill="x")
 
         def keys():
@@ -6685,9 +6685,8 @@ def gui():
         a_ent.pack(side="left", padx=(0, 8))
         b_lbl = ttk.Label(r3, text="Down %", style="Muted.TLabel")
         b_ent = ttk.Entry(r3, textvariable=b_var, width=7)
-        ttk.Label(ef, text="Scrub along the timeline, then use the mouse wheel on the picture to zoom and drag to move the box. Each marker is where a zoom or "
-                           "position is reached; 'Speed into it' sets how it gets there (Jump = no gradual move). Right-click a marker to remove it.",
-                  style="Muted.TLabel", wraplength=dim["w"], justify="left").pack(anchor="w", pady=(2, 0))
+        ttk.Label(ef, text="Scrub, then mouse wheel = zoom, drag = move the box. Right-click a marker to remove it.",
+                  style="Muted.TLabel", wraplength=max(300, dim["w"] - 30), justify="left").pack(anchor="w", pady=(2, 0))
 
         def edit_ease(*_):
             if S["busy"]:
@@ -6752,7 +6751,7 @@ def gui():
 
         def resize(nw):
             try:
-                tl.configure(width=nw)
+                tl.configure(width=max(300, nw - 30))
             except tk.TclError:
                 return
             draw_timeline()
@@ -6819,7 +6818,7 @@ def gui():
             return
         strip_cfg = STRIP_OPS.get(spec["id"])
         is_trim = spec["id"] == "trim"
-        dim = {"w": 560, "h": 315} if (is_trim or spec["id"] == "crop") else ({"w": 480, "h": 270} if spec["id"] == "zoompan" else {"w": 430, "h": 245})  # picture slot size; Trim gets a bigger one and follows the window size
+        dim = {"w": 560, "h": 315} if (is_trim or spec["id"] == "crop") else ({"w": 480, "h": 185} if spec["id"] == "zoompan" else {"w": 430, "h": 245})  # picture slot size; Trim gets a bigger one and follows the window size
         holds = []
         base_w, base_h = dim["w"], dim["h"]
         names = ["Frame: the gold box is what you keep. Drag to move it, mouse wheel to zoom.", "Result at this moment"] if spec["id"] == "zoompan" else ["Preview (the handle you moved last)"] if is_trim else (["Result of the crop"] if spec["id"] == "crop" else (["First clip", "Second clip (joined after it)"] if spec["id"] in ("join", "crossfade") else ["Before", "After (this is what the result will look like)"]))
