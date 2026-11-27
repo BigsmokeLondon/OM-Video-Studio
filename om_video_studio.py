@@ -5271,6 +5271,7 @@ def gui():
         cfg = cfg or STRIP_OPS["trim"]
         KA, KB, WINDOW = cfg["a"], cfg["b"], cfg["mode"] == "window"
         MORE = cfg["mode"] == "range" and "more" in tkvars  # Trim: several kept sections
+        XTRA = (f_base.metrics("linespace") + 10) if MORE else 0  # room under the strip for the length counter
 
         def num(t):
             return (f"{max(0.0, t):.3f}".rstrip("0").rstrip(".")) or "0"
@@ -5282,10 +5283,10 @@ def gui():
         BOTTOM = bool(cfg.get("bottom"))  # the strip sits under the whole dialog: the holder asks for no width, so it never widens the window
         holder = None
         if BOTTOM:
-            holder = ttk.Frame(box, width=10, height=RULER + TH0 + 6)
+            holder = ttk.Frame(box, width=10, height=RULER + TH0 + 6 + XTRA)
             holder.pack(fill="x", pady=(0, 6))
             holder.pack_propagate(False)
-        cv = tk.Canvas(holder or box, width=pw, height=RULER + TH0 + 6, highlightthickness=0, bg=pal()["log_bg"], cursor="hand2")
+        cv = tk.Canvas(holder or box, width=pw, height=RULER + TH0 + 6 + XTRA, highlightthickness=0, bg=pal()["log_bg"], cursor="hand2")
         cv.pack(pady=(0, 6), anchor="w") if BOTTOM else cv.pack(pady=(0, 6))
 
         # Play selection: opens ffplay in its own window with sound, playing only the part between
@@ -5573,6 +5574,9 @@ def gui():
                     cv.create_rectangle(xa, RULER, xb, h_, fill="#000000", stipple="gray75", outline="#ef4444", width=1)
                     if xb - xa > 34:
                         cv.create_text((xa + xb) / 2, RULER + S["th"] / 2, text="CUT", fill="#fca5a5", font=f_base)
+                for a_, b_ in kept:  # kept parts get a green tint
+                    xa, xb = min(max(x_of(a_), lo_), hi_), min(max(x_of(b_), lo_), hi_)
+                    cv.create_rectangle(xa, RULER, xb, h_, fill="#22c55e", stipple="gray25", outline="")
                 for k_, (a_, b_) in enumerate(ex):
                     xa, xb = min(max(x_of(a_), lo_), hi_), min(max(x_of(b_), lo_), hi_)
                     cv.create_rectangle(xa, RULER, xb, h_, outline="#22c55e", width=3)
@@ -5596,7 +5600,7 @@ def gui():
             lh = f_base.metrics("linespace") + 6
             cw_ = int(cv.cget("width"))
             cx = min(max(cx, tw / 2 + 2), cw_ - tw / 2 - 2)  # keep the label inside the picture
-            ly0 = RULER + 6 if ce - cs > tw + 24 else h_ - lh - 6  # a short selection: the label sits low, clear of the handles
+            ly0 = h_ + 6 if MORE else (RULER + 6 if ce - cs > tw + 24 else h_ - lh - 6)  # Trim: the counter sits under the strip; others: a short selection puts it low, clear of the handles
             cv.create_rectangle(cx - tw / 2, ly0, cx + tw / 2, ly0 + lh, fill="#000000", outline=BRAND_GOLD)
             cv.create_text(cx, ly0 + lh / 2, text=txt, fill=BRAND_GOLD, font=f_base)
             draw_ph()
@@ -5734,9 +5738,9 @@ def gui():
             else:
                 S.update(dur=dur, sw=sw, th=sh)
                 S["prev"] = times()
-                cv.configure(width=sw + 2 * PAD, height=RULER + sh + 6)
+                cv.configure(width=sw + 2 * PAD, height=RULER + sh + 6 + XTRA)
                 if holder is not None:
-                    holder.configure(height=RULER + sh + 12)
+                    holder.configure(height=RULER + sh + 12 + XTRA)
             redraw()
 
         def work():
